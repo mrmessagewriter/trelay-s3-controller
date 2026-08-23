@@ -16,6 +16,14 @@ The project currently provides:
 - A Microdot web interface and REST API.
 - Versioned event records with automatic migrations.
 - Uncompressed ZIP-based firmware deployment with an embedded firmware manifest.
+- REST API for direct control of the relays, while this works, it is not very tested.
+
+What it doesn't provide:
+ - User Authentication
+ - Cross Service Authentication
+ - OTA firmware updates
+
+These are coming in later updates. 
 
 ## Repository layout
 
@@ -51,9 +59,10 @@ firmware/
 
 ## MicroPython requirement
 
-The LILYGO T-Relay ESP32-S3 used by this project has 16 MiB flash and 8 MiB
+The T-RelayS3 used by this project has 16 MiB flash and 8 MiB
 Octal PSRAM. Use the MicroPython ESP32-S3 **SPIRAM_OCT** build so the PSRAM is
-available to MicroPython.
+available to MicroPython.  
+This gives plenty of room 8MB is huge, and MicroPython is quite small.  This memory gives and storage gives plenty of space to play around in. 
 
 You can find it here: https://micropython.org/download/ESP32_GENERIC_S3/
 
