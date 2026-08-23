@@ -55,6 +55,8 @@ The LILYGO T-Relay ESP32-S3 used by this project has 16 MiB flash and 8 MiB
 Octal PSRAM. Use the MicroPython ESP32-S3 **SPIRAM_OCT** build so the PSRAM is
 available to MicroPython.
 
+You can find it here: https://micropython.org/download/ESP32_GENERIC_S3/
+
 ## Build
 
 From the repository root:
