@@ -1,0 +1,46 @@
+{
+  "device_name": "Sprinklers1",
+  "wifi": {
+    "ssid": "",
+    "password": ""
+  },
+  "time": {
+    "ntp_server": "pool.ntp.org",
+    "timezone": "America/Los_Angeles",
+    "sync_interval_hours": 12
+  },
+  "weather": {
+    "enabled": false,
+    "zip_code": "",
+    "country_code": "US",
+    "latitude": 0.0,
+    "longitude": 0.0,
+    "resolved_name": "",
+    "refresh_minutes": 30
+  },
+  "event_blocks": {
+    "rain_threshold_in": 0.25,
+    "rain_lookback_days": 2,
+    "wind_max_mph": 15.0
+  },
+  "relays": [
+    {
+      "name": "Relay 1"
+    },
+    {
+      "name": "Relay 2"
+    },
+    {
+      "name": "Relay 3"
+    },
+    {
+      "name": "Relay 4"
+    },
+    {
+      "name": "Relay 5"
+    },
+    {
+      "name": "Relay 6"
+    }
+  ]
+}

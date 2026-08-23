@@ -1,0 +1,16 @@
+# Generated firmware output
+firmware/dist/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+
+# Editor/OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

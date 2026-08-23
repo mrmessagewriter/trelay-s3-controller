@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sprinkler Setup</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#111827;color:#f3f4f6;font-family:Arial,sans-serif}.wrap{max-width:650px;margin:auto;padding:24px}.panel{background:#1f2937;border-radius:12px;padding:24px}h1{margin-top:0}h2{margin-top:28px;border-bottom:1px solid #374151;padding-bottom:8px}label{display:block;margin:14px 0 5px;font-weight:bold}input,select{width:100%;padding:11px;border:1px solid #4b5563;border-radius:7px;background:#111827;color:white;font-size:15px}button,a.button{display:block;width:100%;padding:13px;margin-top:14px;border:0;border-radius:8px;color:white;text-align:center;text-decoration:none;font-size:15px;cursor:pointer}.save{background:#2563eb}.sync{background:#047857}.reboot{background:#b45309}.back{background:#4b5563}.note{color:#9ca3af;font-size:13px;line-height:1.45}.message{display:none;margin-top:16px;padding:12px;border-radius:8px}.success{display:block;background:#065f46}.error{display:block;background:#991b1b}
+</style>
+</head>
+<body>
+<div class="wrap"><div class="panel">
+<h1>Sprinkler Setup</h1>
+<p class="note">Configure the controller, existing Wi-Fi network, NTP time synchronization, local weather, and relay names.</p>
+<h2>Device</h2>
+<label for="device_name">Device name</label><input id="device_name" maxlength="40">
+<h2>Wi-Fi</h2>
+<label for="ssid">Existing network SSID</label><input id="ssid" maxlength="32">
+<label for="password">Wi-Fi password</label><input id="password" type="password" maxlength="64" placeholder="Leave blank to keep current password">
+<h2>Time</h2>
+<label for="ntp_server">NTP server</label><input id="ntp_server" maxlength="80" placeholder="pool.ntp.org">
+<label for="timezone">Timezone</label>
+<select id="timezone"><option value="America/Los_Angeles">America/Los_Angeles (PST/PDT)</option><option value="UTC">UTC</option></select>
+<label for="sync_interval_hours">Resync interval (hours)</label><input id="sync_interval_hours" type="number" min="1" max="168" value="12">
+<p id="current_time" class="note">Current time: loading...</p>
+<button class="sync" onclick="syncTime()">Sync Time Now</button>
+
+<h2>Weather</h2>
+<label><input id="weather_enabled" type="checkbox" style="width:auto"> Enable local weather</label>
+<label for="weather_zip_code">ZIP / postal code</label>
+<input id="weather_zip_code" maxlength="12" placeholder="98926">
+<label for="weather_country_code">Country code</label>
+<input id="weather_country_code" maxlength="2" value="US">
+<p class="note">At boot, after Wi-Fi connects, the ZIP code is resolved once to latitude/longitude. The saved coordinates are then used for weather.</p>
+<label for="weather_resolved_name">Resolved location</label>
+<input id="weather_resolved_name" readonly>
+<label for="weather_latitude">Latitude</label>
+<input id="weather_latitude" type="number" step="0.0001" placeholder="47.0000">
+<label for="weather_longitude">Longitude</label>
+<input id="weather_longitude" type="number" step="0.0001" placeholder="-120.0000">
+<label for="weather_refresh_minutes">Weather refresh interval (minutes)</label>
+<input id="weather_refresh_minutes" type="number" min="5" max="1440" value="30">
+<p id="weather_status" class="note">Weather status: loading...</p>
+<button class="sync" onclick="refreshWeather()">Refresh Weather Now</button>
+
+<h2>Global Event Blocks</h2>
+<p class="note">Events opt in to these blocks individually. If an enabled block condition is met at the event's scheduled time, that event is logged as skipped.</p>
+<label for="block_rain_threshold_in">Rain block threshold (inches)</label>
+<input id="block_rain_threshold_in" type="number" min="0" step="0.01" value="0.25">
+<label for="block_rain_lookback_days">Recent-rain lookback (days)</label>
+<input id="block_rain_lookback_days" type="number" min="1" max="4" value="2">
+<label for="block_wind_max_mph">Wind block threshold (mph)</label>
+<input id="block_wind_max_mph" type="number" min="0" step="0.5" value="15">
+
+<h2>Relay Names</h2><div id="relays"></div>
+<button class="save" onclick="saveConfig()">Save Configuration</button>
+<button class="reboot" onclick="rebootDevice()">Reboot Controller</button>
+<a class="button back" href="/events">Manage Events</a>
+<a class="button back" href="/">Back to Relay Controller</a>
+<div id="message" class="message"></div>
+</div></div>
+<script>
+function showMessage(text,ok){const m=document.getElementById('message');m.textContent=text;m.className='message '+(ok?'success':'error')}
+async function load(){try{let r=await fetch('/api/config',{cache:'no-store'});if(!r.ok)throw Error('HTTP '+r.status);let c=await r.json();device_name.value=c.device_name||'';ssid.value=c.ssid||'';ntp_server.value=c.ntp_server||'pool.ntp.org';timezone.value=c.timezone||'America/Los_Angeles';sync_interval_hours.value=c.sync_interval_hours||12;weather_enabled.checked=!!c.weather_enabled;weather_zip_code.value=c.weather_zip_code||"";weather_country_code.value=c.weather_country_code||"US";weather_resolved_name.value=c.weather_resolved_name||"";weather_latitude.value=c.weather_latitude??0;weather_longitude.value=c.weather_longitude??0;weather_refresh_minutes.value=c.weather_refresh_minutes||30;block_rain_threshold_in.value=c.block_rain_threshold_in??0.25;block_rain_lookback_days.value=c.block_rain_lookback_days||2;block_wind_max_mph.value=c.block_wind_max_mph??15;let b=document.getElementById('relays');b.innerHTML='';for(let i=0;i<6;i++){let l=document.createElement('label');l.textContent='Relay '+(i+1);let x=document.createElement('input');x.id='relay_'+i;x.maxLength=40;x.value=(c.relays&&c.relays[i]&&c.relays[i].name)||('Relay '+(i+1));b.appendChild(l);b.appendChild(x)}await refreshTime();await refreshWeatherStatus()}catch(e){showMessage('Unable to load configuration: '+e.message,false)}}
+async function refreshTime(){try{let r=await fetch('/api/time',{cache:'no-store'});let t=await r.json();current_time.textContent='Current time: '+t.local+' '+t.timezone_abbreviation+' (UTC '+t.utc+')'+(t.synchronized?'':' — not synchronized')}catch(e){current_time.textContent='Current time unavailable'}}
+async function saveConfig(){let names=[];for(let i=0;i<6;i++)names.push(document.getElementById('relay_'+i).value);let body={device_name:device_name.value,ssid:ssid.value,password:password.value,ntp_server:ntp_server.value,timezone:timezone.value,sync_interval_hours:parseInt(sync_interval_hours.value||'12'),weather_enabled:weather_enabled.checked,weather_zip_code:weather_zip_code.value,weather_country_code:weather_country_code.value,weather_latitude:parseFloat(weather_latitude.value||'0'),weather_longitude:parseFloat(weather_longitude.value||'0'),weather_refresh_minutes:parseInt(weather_refresh_minutes.value||'30'),block_rain_threshold_in:parseFloat(block_rain_threshold_in.value||'0.25'),block_rain_lookback_days:parseInt(block_rain_lookback_days.value||'2'),block_wind_max_mph:parseFloat(block_wind_max_mph.value||'15'),relays:names};try{let r=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});let j=await r.json();if(!r.ok)throw Error(j.error||'Save failed');password.value='';showMessage('Configuration saved. Reboot if Wi-Fi settings changed.',true)}catch(e){showMessage('Save failed: '+e.message,false)}}
+async function syncTime(){showMessage('Synchronizing time...',true);try{let r=await fetch('/api/time/sync',{method:'POST'});let j=await r.json();if(!r.ok)throw Error('NTP synchronization failed');await refreshTime();await refreshWeatherStatus();showMessage('Time synchronized successfully.',true)}catch(e){showMessage(e.message,false)}}
+async function refreshWeatherStatus(){try{let r=await fetch('/api/weather',{cache:'no-store'});let w=await r.json();if(!w.enabled){weather_status.textContent='Weather status: disabled';return}if(!w.valid){weather_status.textContent='Weather status: unavailable'+(w.last_error?' — '+w.last_error:'');return}let c=w.current||{};weather_status.textContent='Weather status: '+(c.temperature_f??'—')+' °F, '+(c.humidity_percent??'—')+'% humidity'+(w.stale?' — stale':'')}catch(e){weather_status.textContent='Weather status unavailable'}}
+async function refreshWeather(){showMessage('Refreshing weather...',true);try{let r=await fetch('/api/weather/refresh',{method:'POST'});let j=await r.json();if(!r.ok)throw Error(j.weather&&j.weather.last_error?j.weather.last_error:'Weather refresh failed');await refreshWeatherStatus();showMessage('Weather refreshed successfully.',true)}catch(e){showMessage(e.message,false)}}
+async function rebootDevice(){if(!confirm('Reboot the sprinkler controller now?'))return;showMessage('Rebooting controller...',true);try{await fetch('/api/reboot',{method:'POST'})}catch(e){}}
+load();
+</script>
+</body>
+</html>

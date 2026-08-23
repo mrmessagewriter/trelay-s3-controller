@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sprinkler Controller</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#111827;color:#f3f4f6;font-family:Arial,sans-serif}
+header{background:#1f2937;padding:18px;text-align:center;border-bottom:1px solid #374151}h1{margin:0}
+.meta{margin-top:6px;color:#9ca3af;font-size:14px}.wrap{max-width:900px;margin:auto;padding:20px}
+.toolbar{display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap}.toolbar a,.toolbar button{background:#4b5563;color:white;border:0;border-radius:8px;padding:10px 14px;text-decoration:none;cursor:pointer}
+.upcoming{background:#1f2937;border:2px solid #374151;border-radius:12px;padding:18px;margin-bottom:18px}.upcoming h2{margin-top:0}.upcoming-row{border-bottom:1px solid #374151;padding:10px 0}.upcoming-row:last-child{border-bottom:0}.upcoming-time{font-weight:bold;color:#93c5fd}.upcoming-temp{color:#fbbf24;margin-left:8px}.upcoming-skip{display:inline-block;margin-left:8px;padding:3px 7px;border-radius:6px;background:#92400e;color:#fef3c7;font-size:12px;font-weight:bold}.weather{background:#1f2937;border:2px solid #374151;border-radius:12px;padding:18px;margin-bottom:18px}.weather h2{margin-top:0}.weather-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}.weather-item{background:#111827;border-radius:8px;padding:10px}.event-log{background:#1f2937;border:2px solid #374151;border-radius:12px;padding:18px;margin-top:18px}.log-row{border-bottom:1px solid #374151;padding:9px 0}.log-row:last-child{border-bottom:0}.fired{color:#4ade80}.skipped{color:#fbbf24}.manual{color:#60a5fa}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}.card{background:#1f2937;border:2px solid #374151;border-radius:12px;padding:18px}.card.active{border-color:#22c55e}.name{font-size:20px;font-weight:bold}.state{margin:14px 0;font-size:18px}.onstate{color:#4ade80}.offstate{color:#f87171}.buttons{display:flex;gap:7px}.buttons button{flex:1;border:0;border-radius:7px;color:white;padding:10px;cursor:pointer}.b1{background:#16a34a}.b0{background:#dc2626}.bt{background:#2563eb}
+</style>
+</head>
+<body>
+<header>
+<h1 id="device">Sprinklers1</h1>
+<div id="firmware" class="meta">Firmware version loading...</div>
+<div id="connection" class="meta">Connecting...</div>
+<div id="clock" class="meta">Time not synchronized</div>
+</header>
+<div class="wrap">
+<div class="toolbar">
+<a href="/setup">Settings</a>
+<a href="/events">Events</a>
+<button onclick="syncTime()">Sync Time Now</button>
+<button onclick="refreshWeather()">Refresh Weather</button>
+</div>
+<div id="upcoming" class="upcoming">
+<h2>Next 3 Events</h2>
+<div id="upcoming_events">No upcoming events.</div>
+</div>
+<div id="weather" class="weather">
+<h2>Local Weather</h2>
+<div id="weather_content">Weather not available</div>
+</div>
+<div id="grid" class="grid"></div>
+<div class="event-log"><h2>Event Log</h2><div id="event_log">No event activity.</div><p><a href="/events" style="color:#93c5fd">Manage Events</a></p></div>
+</div>
+<script>
+const grid=document.getElementById("grid");
+function esc(v){const d=document.createElement("div");d.textContent=v;return d.innerHTML}
+function render(data){
+ document.getElementById("device").textContent=data.device||"Sprinklers1";
+ const fw=data.firmware||{};
+ document.getElementById("firmware").textContent="Firmware v"+(fw.version||"unknown");
+ document.getElementById("connection").textContent=data.ip?"Connected: "+data.ip:"Connected";
+ if(data.time){
+  const t=data.time;
+  document.getElementById("clock").textContent=(t.synchronized?"":"Not synchronized — ")+t.local+" "+t.timezone_abbreviation+" | UTC "+t.utc;
+ }
+ if(data.weather){renderWeather(data.weather);}
+ grid.innerHTML="";
+ data.relays.forEach(r=>{
+  const c=document.createElement("div");c.className="card"+(r.state?" active":"");
+  c.innerHTML='<div class="name">'+esc(r.name)+'</div><div>Relay '+r.relay+'</div><div class="state '+(r.state?'onstate':'offstate')+'">'+(r.state?'ON':'OFF')+'</div><div class="buttons"><button class="b1" onclick="act('+r.relay+',\'on\')">ON</button><button class="b0" onclick="act('+r.relay+',\'off\')">OFF</button><button class="bt" onclick="act('+r.relay+',\'toggle\')">Toggle</button></div>';
+  grid.appendChild(c);
+ });
+}
+function renderWeather(w){
+ const box=document.getElementById("weather_content");
+ if(!w.enabled){box.textContent="Weather disabled in settings.";return}
+ if(!w.valid){
+  box.textContent=w.last_error?("Weather unavailable: "+w.last_error):"Weather unavailable";
+  return;
+ }
+ const c=w.current||{};
+ const d=(w.daily&&w.daily.length)?w.daily[0]:{};
+ box.innerHTML='<div class="weather-grid">'+
+  '<div class="weather-item"><b>Temperature</b><br>'+(c.temperature_f??"—")+' °F</div>'+
+  '<div class="weather-item"><b>Humidity</b><br>'+(c.humidity_percent??"—")+'%</div>'+
+  '<div class="weather-item"><b>Wind</b><br>'+(c.wind_mph??"—")+' mph</div>'+
+  '<div class="weather-item"><b>Current precip.</b><br>'+(c.precipitation_in??"—")+' in</div>'+
+  '<div class="weather-item"><b>Rain chance today</b><br>'+(d.precipitation_probability??"—")+'%</div>'+
+  '<div class="weather-item"><b>Forecast precip.</b><br>'+(d.precipitation_in??"—")+' in</div>'+
+  '<div class="weather-item"><b>ET₀ today</b><br>'+(d.et0_in??"—")+' in</div>'+
+  '</div>'+(w.stale?'<p class="meta">Weather data is stale.</p>':'');
+}
+async function refreshWeather(){
+ const b=event.target;b.disabled=true;b.textContent='Refreshing...';
+ try{
+  const r=await fetch('/api/weather/refresh',{method:'POST'});
+  const j=await r.json();
+  if(j.weather)renderWeather(j.weather);
+ }finally{
+  b.disabled=false;b.textContent='Refresh Weather';
+ }
+}
+function actionLabel(action){
+ const labels={relay_on:'Relay ON',relay_off:'Relay OFF',all_relays_on:'All Relays ON',all_relays_off:'All Relays OFF',get_url:'GET URL'};
+ return labels[action]||action;
+}
+function temperatureLabel(e){
+ if(e.action==='get_url')return '';
+ const lo=e.min_temp_f,hi=e.max_temp_f;
+ if(lo!==null&&lo!==undefined&&hi!==null&&hi!==undefined)return lo+'–'+hi+' °F';
+ if(lo!==null&&lo!==undefined)return '≥ '+lo+' °F';
+ if(hi!==null&&hi!==undefined)return '≤ '+hi+' °F';
+ return 'Any temperature';
+}
+async function refreshUpcomingEvents(){
+ const box=document.getElementById('upcoming_events');
+ try{
+  const r=await fetch('/api/events/upcoming',{cache:'no-store'});
+  const text=await r.text();
+  let j;
+  try{
+   j=JSON.parse(text);
+  }catch(parseError){
+   throw new Error('HTTP '+r.status+' returned non-JSON');
+  }
+  if(!r.ok||j.error){
+   throw new Error(j.error||('HTTP '+r.status));
+  }
+  if(j.available===false){
+   box.textContent='Event scheduler is not initialized.';
+   return;
+  }
+  if(j.time_synchronized===false){
+   box.textContent='Waiting for time synchronization.';
+   return;
+  }
+  const list=j.upcoming||[];
+  if(!list.length){
+   box.textContent='No upcoming events.';
+   return;
+  }
+  box.innerHTML='';
+  list.forEach(e=>{
+   const row=document.createElement('div');
+   row.className='upcoming-row';
+   const temp=temperatureLabel(e);
+   const skip=e.skip_next?'<span class="upcoming-skip">WILL BE SKIPPED</span>':'';
+   row.innerHTML='<span class="upcoming-time">'+esc(e.day_name)+' '+esc(e.time)+'</span> — <b>'+esc(e.name)+'</b> — '+esc(actionLabel(e.action))+(temp?'<span class="upcoming-temp">'+esc(temp)+'</span>':'')+skip;
+   box.appendChild(row);
+  });
+ }catch(e){
+  box.textContent='Upcoming events unavailable: '+e.message;
+ }
+}
+async function refreshEventLog(){try{let r=await fetch('/api/events/log',{cache:'no-store'});let j=await r.json();let box=document.getElementById('event_log');if(!j.log||!j.log.length){box.textContent='No event activity.';return}box.innerHTML='';j.log.slice(0,20).forEach(x=>{let d=document.createElement('div');d.className='log-row';let temp=(x.temperature_f===null||x.temperature_f===undefined)?'':(' @ '+x.temperature_f+' °F');d.innerHTML='<b>'+esc(x.time)+'</b> — '+esc(x.event_name)+' — <span class="'+x.status+'">'+x.status.toUpperCase()+'</span>'+temp+(x.reason?' — '+esc(x.reason):'')+(x.detail?' — '+esc(x.detail):'');box.appendChild(d)})}catch(e){document.getElementById('event_log').textContent='Event log unavailable'}}
+async function status(){try{const r=await fetch('/api/status',{cache:'no-store'});render(await r.json())}catch(e){document.getElementById('connection').textContent='Disconnected'}}
+async function act(n,a){const r=await fetch('/api/relay/'+n+'/'+a,{method:'POST'});render(await r.json())}
+async function syncTime(){const b=event.target;b.disabled=true;b.textContent='Syncing...';try{const r=await fetch('/api/time/sync',{method:'POST'});const j=await r.json();if(j.time){document.getElementById('clock').textContent=j.time.local+' '+j.time.timezone_abbreviation+' | UTC '+j.time.utc}}finally{b.disabled=false;b.textContent='Sync Time Now'}}
+status();refreshUpcomingEvents();refreshEventLog();setInterval(status,2000);setInterval(refreshUpcomingEvents,30000);setInterval(refreshEventLog,5000);
+</script>
+</body>
+</html>
