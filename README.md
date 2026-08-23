@@ -1,7 +1,7 @@
 # TRelay S3 Controller
 
 TRelay S3 Controller is a MicroPython-based Wi-Fi sprinkler/relay controller for the
-LILYGO T-Relay ESP32-S3.
+LILYGO T-RelayS3  (ESP32-S3)
 
 The project currently provides:
 
