@@ -684,6 +684,208 @@ def patch_tinyusb_ncm_descriptor_compat(micropython_dir, esp32_dir):
     )
 
 
+
+def patch_esp32_usbd_ncm_port_compat(micropython_dir):
+    # Port MicroPython's generic USB-NCM implementation to ESP-IDF lwIP.
+    source = micropython_dir / "extmod" / "network_usbd_ncm.c"
+
+    if not source.is_file():
+        raise FileNotFoundError(
+            "Could not locate MicroPython USB-NCM source: {}".format(source)
+        )
+
+    data = source.read_text(encoding="utf-8")
+
+    sentinel = "LILYGO_T_RELAY_S3_NCM ESP32 compatibility"
+    if sentinel in data:
+        print("ESP32 USB-NCM source compatibility patch already applied.")
+        return
+
+    include_old = '#include "lwip/dhcp.h"\\n'
+    include_new = '#include "lwip/dhcp.h"\\n#include "lwip/tcpip.h"\\n'
+
+    if include_old not in data:
+        raise RuntimeError(
+            "Could not find lwIP include insertion point in {}".format(source)
+        )
+
+    data = data.replace(include_old, include_new, 1)
+
+    anchor = '#include "shared/netutils/dhcpserver.h"\\n'
+
+    compat = r"""
+/*
+ * LILYGO_T_RELAY_S3_NCM ESP32 compatibility
+ *
+ * MicroPython's generic USB-NCM implementation currently targets ports which
+ * use MICROPY_PY_LWIP and the generic NIC registry/config helpers. ESP32 uses
+ * ESP-IDF's lwIP integration instead.
+ */
+#if defined(ESP_PLATFORM)
+
+#if !LWIP_TCPIP_CORE_LOCKING
+#error "LILYGO_T_RELAY_S3_NCM requires CONFIG_LWIP_TCPIP_CORE_LOCKING=y"
+#endif
+
+#ifndef MICROPY_PY_LWIP_ENTER
+#define MICROPY_PY_LWIP_ENTER LOCK_TCPIP_CORE();
+#endif
+
+#ifndef MICROPY_PY_LWIP_EXIT
+#define MICROPY_PY_LWIP_EXIT UNLOCK_TCPIP_CORE();
+#endif
+
+#ifndef mod_network_register_nic
+#define mod_network_register_nic(nic) ((void)(nic))
+#endif
+
+#ifndef tud_network_link_state
+#define tud_network_link_state(rhport, is_up) do { (void)(rhport); (void)(is_up); } while (0)
+#endif
+
+static mp_obj_t esp32_ncm_ifconfig(struct netif *netif, size_t n_args, const mp_obj_t *args) {
+    if (n_args == 0) {
+        ip4_addr_t ip;
+        ip4_addr_t netmask;
+        ip4_addr_t gateway;
+        ip_addr_t dns;
+
+        MICROPY_PY_LWIP_ENTER
+        ip4_addr_copy(ip, *netif_ip4_addr(netif));
+        ip4_addr_copy(netmask, *netif_ip4_netmask(netif));
+        ip4_addr_copy(gateway, *netif_ip4_gw(netif));
+        ip_addr_copy(dns, *dns_getserver(0));
+        MICROPY_PY_LWIP_EXIT
+
+        mp_obj_t tuple[4] = {
+            netutils_format_ipv4_addr((uint8_t *)&ip, NETUTILS_BIG),
+            netutils_format_ipv4_addr((uint8_t *)&netmask, NETUTILS_BIG),
+            netutils_format_ipv4_addr((uint8_t *)&gateway, NETUTILS_BIG),
+            netutils_format_ipv4_addr((uint8_t *)&dns, NETUTILS_BIG),
+        };
+
+        return mp_obj_new_tuple(4, tuple);
+    }
+
+    if (!mp_obj_is_type(args[0], &mp_type_tuple) && !mp_obj_is_type(args[0], &mp_type_list)) {
+        mp_raise_ValueError(MP_ERROR_TEXT("invalid arguments"));
+    }
+
+    mp_obj_t *items;
+    mp_obj_get_array_fixed_n(args[0], 4, &items);
+
+    ip4_addr_t ip;
+    ip4_addr_t netmask;
+    ip4_addr_t gateway;
+    ip_addr_t dns;
+
+    netutils_parse_ipv4_addr(items[0], (uint8_t *)&ip, NETUTILS_BIG);
+    netutils_parse_ipv4_addr(items[1], (uint8_t *)&netmask, NETUTILS_BIG);
+    netutils_parse_ipv4_addr(items[2], (uint8_t *)&gateway, NETUTILS_BIG);
+    netutils_parse_ipv4_addr(items[3], (uint8_t *)&dns, NETUTILS_BIG);
+
+    MICROPY_PY_LWIP_ENTER
+    netif_set_addr(netif, &ip, &netmask, &gateway);
+    dns_setserver(0, &dns);
+    MICROPY_PY_LWIP_EXIT
+
+    return mp_const_none;
+}
+
+static mp_obj_t esp32_ncm_ipconfig(struct netif *netif, size_t n_args, const mp_obj_t *args, mp_map_t *kwargs) {
+    if (kwargs->used == 0) {
+        if (n_args != 1) {
+            mp_raise_TypeError(MP_ERROR_TEXT("must query one param"));
+        }
+
+        qstr key = mp_obj_str_get_qstr(args[0]);
+
+        if (key == MP_QSTR_addr4) {
+            ip4_addr_t ip;
+            ip4_addr_t netmask;
+
+            MICROPY_PY_LWIP_ENTER
+            ip4_addr_copy(ip, *netif_ip4_addr(netif));
+            ip4_addr_copy(netmask, *netif_ip4_netmask(netif));
+            MICROPY_PY_LWIP_EXIT
+
+            mp_obj_t tuple[2] = {
+                netutils_format_ipv4_addr((uint8_t *)&ip, NETUTILS_BIG),
+                netutils_format_ipv4_addr((uint8_t *)&netmask, NETUTILS_BIG),
+            };
+            return mp_obj_new_tuple(2, tuple);
+        }
+
+        if (key == MP_QSTR_gw4) {
+            ip4_addr_t gateway;
+
+            MICROPY_PY_LWIP_ENTER
+            ip4_addr_copy(gateway, *netif_ip4_gw(netif));
+            MICROPY_PY_LWIP_EXIT
+
+            return netutils_format_ipv4_addr((uint8_t *)&gateway, NETUTILS_BIG);
+        }
+
+        if (key == MP_QSTR_dns) {
+            ip_addr_t dns;
+
+            MICROPY_PY_LWIP_ENTER
+            ip_addr_copy(dns, *dns_getserver(0));
+            MICROPY_PY_LWIP_EXIT
+
+            char address[IPADDR_STRLEN_MAX];
+            ipaddr_ntoa_r(&dns, address, sizeof(address));
+            return mp_obj_new_str_from_cstr(address);
+        }
+
+        mp_raise_ValueError(MP_ERROR_TEXT("unexpected key"));
+    }
+
+    if (n_args != 0) {
+        mp_raise_TypeError(MP_ERROR_TEXT("can't specify pos and kw args"));
+    }
+
+    mp_raise_ValueError(MP_ERROR_TEXT("setting ipconfig is not supported on ESP32 USB NCM"));
+}
+
+#define mod_network_nic_ifconfig esp32_ncm_ifconfig
+#define mod_network_nic_ipconfig esp32_ncm_ipconfig
+
+#endif /* ESP_PLATFORM */
+"""
+
+    if anchor not in data:
+        raise RuntimeError(
+            "Could not find USB-NCM compatibility insertion point in {}".format(source)
+        )
+
+    data = data.replace(anchor, anchor + compat, 1)
+
+    old_input = """        netif_init_cb,
+        ethernet_input
+        );"""
+
+    new_input = """        netif_init_cb,
+        tcpip_input
+        );"""
+
+    if old_input not in data:
+        raise RuntimeError(
+            "Could not find USB-NCM netif input callback in {}".format(source)
+        )
+
+    data = data.replace(old_input, new_input, 1)
+
+    source.write_text(data, encoding="utf-8")
+
+    print()
+    print("Applied ESP32 USB-NCM network compatibility patch:")
+    print("  ESP-IDF lwIP core locking")
+    print("  ESP32-local ifconfig/ipconfig query helpers")
+    print("  generic NIC registration disabled")
+    print("  RX routed through tcpip_input()")
+    print("  legacy TinyUSB link-state compatibility")
+
 def find_firmware_bin(esp32_dir, board_name, variant):
     expected = (
         esp32_dir
@@ -846,6 +1048,10 @@ def main():
     patch_tinyusb_ncm_descriptor_compat(
         micropython_dir,
         esp32_dir,
+    )
+
+    patch_esp32_usbd_ncm_port_compat(
+        micropython_dir,
     )
 
     print()
