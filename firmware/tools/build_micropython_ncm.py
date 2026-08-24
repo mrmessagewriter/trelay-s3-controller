@@ -731,6 +731,8 @@ def patch_esp32_usbd_ncm_port_compat(micropython_dir):
  */
 #if defined(ESP_PLATFORM)
 
+#include "esp_mac.h"
+
 #if !LWIP_TCPIP_CORE_LOCKING
 #error "LILYGO_T_RELAY_S3_NCM requires CONFIG_LWIP_TCPIP_CORE_LOCKING=y"
 #endif
@@ -892,11 +894,24 @@ static mp_obj_t esp32_ncm_ipconfig(struct netif *netif, size_t n_args, const mp_
 
     data = data.replace(old_input, new_input, 1)
 
+    old_mac = "    mp_hal_get_mac(MP_HAL_MAC_ETH0, tud_network_mac_address);"
+    new_mac = """    if (esp_read_mac(tud_network_mac_address, ESP_MAC_ETH) != ESP_OK) {
+        mp_raise_OSError(MP_EIO);
+    }"""
+
+    if old_mac not in data:
+        raise RuntimeError(
+            "Could not find generic USB-NCM MAC address call in {}".format(source)
+        )
+
+    data = data.replace(old_mac, new_mac, 1)
+
     source.write_text(data, encoding="utf-8")
 
     print()
     print("Applied ESP32 USB-NCM network compatibility patch:")
     print("  ESP-IDF lwIP core locking")
+    print("  ESP-IDF Ethernet MAC via esp_read_mac(..., ESP_MAC_ETH)")
     print("  ESP32-local ifconfig/ipconfig query helpers")
     print("  generic NIC registration disabled")
     print("  RX routed through tcpip_input()")
