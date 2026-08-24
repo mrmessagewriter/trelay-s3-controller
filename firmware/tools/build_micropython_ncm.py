@@ -701,17 +701,25 @@ def patch_esp32_usbd_ncm_port_compat(micropython_dir):
         print("ESP32 USB-NCM source compatibility patch already applied.")
         return
 
-    include_old = '#include "lwip/dhcp.h"\\n'
-    include_new = '#include "lwip/dhcp.h"\\n#include "lwip/tcpip.h"\\n'
+    include_old = '#include "lwip/dhcp.h"\n'
+    include_new = '#include "lwip/dhcp.h"\n#include "lwip/tcpip.h"\n'
 
     if include_old not in data:
+        include_lines = [
+            line for line in data.splitlines()
+            if line.lstrip().startswith("#include")
+        ]
         raise RuntimeError(
-            "Could not find lwIP include insertion point in {}".format(source)
+            "Could not find lwIP include insertion point in {}. "
+            "Observed includes: {}".format(
+                source,
+                " | ".join(include_lines[:40]),
+            )
         )
 
     data = data.replace(include_old, include_new, 1)
 
-    anchor = '#include "shared/netutils/dhcpserver.h"\\n'
+    anchor = '#include "shared/netutils/dhcpserver.h"\n'
 
     compat = r"""
 /*
@@ -855,8 +863,16 @@ static mp_obj_t esp32_ncm_ipconfig(struct netif *netif, size_t n_args, const mp_
 """
 
     if anchor not in data:
+        include_lines = [
+            line for line in data.splitlines()
+            if line.lstrip().startswith("#include")
+        ]
         raise RuntimeError(
-            "Could not find USB-NCM compatibility insertion point in {}".format(source)
+            "Could not find USB-NCM compatibility insertion point in {}. "
+            "Observed includes: {}".format(
+                source,
+                " | ".join(include_lines[:40]),
+            )
         )
 
     data = data.replace(anchor, anchor + compat, 1)
