@@ -1,73 +1,76 @@
-# Custom MicroPython USB-NCM Runtime
+# MicroPython LILYGO_T_RELAY_S3_NCM
 
-The Sprinklers1 custom MicroPython runtime is released independently from the
-Sprinklers1 application firmware.
+This repository contains a custom MicroPython board build for the
+LILYGO T-Relay ESP32-S3.
 
-## Release identity
-
-Custom MicroPython uses its own version stream:
+## Build identity
 
 ```text
-firmware/tools/next_micropython_version.json
+Board:   LILYGO_T_RELAY_S3_NCM
+Variant: SPIRAM_OCT
 ```
 
-Example:
+The application name `Sprinklers1` is not used for the MicroPython runtime.
 
-```json
-{
-  "next_version": "1.0.0"
-}
+## Features
+
+The custom board keeps the ESP32-S3 Octal-PSRAM configuration and enables:
+
+```c
+#define MICROPY_PY_NETWORK_USBD_NCM (1)
 ```
 
-Git tags use the prefix:
+which exposes:
+
+```python
+network.USBD_NCM
+```
+
+## Local output
 
 ```text
-micropython-v
+firmware/dist/micropython/LILYGO_T_RELAY_S3_NCM-SPIRAM_OCT.bin
 ```
 
-For example:
+## GitHub Action
+
+The runtime has its own workflow:
 
 ```text
-micropython-v1.0.0
+.github/workflows/build-micropython-release.yml
 ```
 
-The release asset is a directly flashable combined ESP32-S3 binary:
+and its own release/version stream.
+
+The GitHub build workspace is:
 
 ```text
-T_RELAY_S3_NCM-SPIRAM_OCT-v1.0.0.bin
+$HOME/micropython-lilygo-t-relay-s3-ncm-build
 ```
 
-## Application releases are separate
+It is intentionally not named after the Sprinklers1 application.
 
-The MicroPython binary is not placed inside:
+## ESP-IDF
+
+The current build configuration uses:
 
 ```text
-Sprinklers1-vX.Y.Z.zip
+ESP-IDF v5.5.2
 ```
 
-Application firmware and the MicroPython runtime can therefore evolve at
-different rates.
+to match the current MicroPython `master` ESP32-S3 dependency lockfile.
 
-A user normally installs the custom MicroPython runtime only when:
+## DHCP source
 
-- Setting up the device for the first time.
-- USB-NCM support changes.
-- The MicroPython base revision changes.
-- ESP-IDF or board-level runtime configuration changes.
-
-Normal Sprinklers1 application updates require only the application firmware
-release.
-## ESP32 DHCP integration
-
-`network.USBD_NCM` enables its small DHCP server by default so the host gets an
-address automatically.  The shared implementation lives in:
+`network.USBD_NCM` requires MicroPython's small DHCP server implementation.
+The custom board adds:
 
 ```text
 shared/netutils/dhcpserver.c
 ```
 
-The current ESP32 port does not include that source in its normal source list,
-so the `T_RELAY_S3_NCM` board definition adds it through `MICROPY_SOURCE_BOARD`.
-Without this addition, an NCM-enabled ESP32 build can reach the final build/link
-stage and then fail because the DHCP server symbols are missing.
+to the ESP32 build.
 
+The board CMake derives the MicroPython repository root from
+`CMAKE_CURRENT_LIST_DIR` because `MICROPY_DIR` is not yet defined when
+`mpconfigboard.cmake` is first processed.
