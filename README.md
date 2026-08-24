@@ -66,7 +66,7 @@ Octal PSRAM. Use the MicroPython ESP32-S3 **SPIRAM_OCT** build so the PSRAM is
 available to MicroPython.  
 This gives plenty of room 8MB is huge, and MicroPython is quite small.  This memory gives and storage gives plenty of space to play around in. 
 
-You can find it here: https://micropython.org/download/ESP32_GENERIC_S3/
+You can find it here: https://micropython.org/resources/firmware/ESP32_GENERIC_S3-SPIRAM_OCT-20260406-v1.28.0.bin
 
 ## Build
 
