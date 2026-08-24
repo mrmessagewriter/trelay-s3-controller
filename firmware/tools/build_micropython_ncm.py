@@ -917,6 +917,84 @@ static mp_obj_t esp32_ncm_ipconfig(struct netif *netif, size_t n_args, const mp_
     print("  RX routed through tcpip_input()")
     print("  legacy TinyUSB link-state compatibility")
 
+
+def patch_dhcpserver_for_esp32_ncm(micropython_dir):
+    """Compile MicroPython's shared DHCP server for the ESP32 USB-NCM build.
+
+    shared/netutils/dhcpserver.c normally compiles its implementation only when
+    MICROPY_PY_LWIP is enabled.  The ESP32 port uses ESP-IDF's lwIP integration
+    and does not enable MICROPY_PY_LWIP, but network.USBD_NCM still uses this
+    shared DHCP server when MICROPY_PY_NETWORK_USBD_NCM_DHCP_SERVER is enabled.
+
+    For this custom build, extend the existing guard rather than enabling
+    MICROPY_PY_LWIP globally.
+    """
+
+    source = (
+        micropython_dir
+        / "shared"
+        / "netutils"
+        / "dhcpserver.c"
+    )
+
+    if not source.is_file():
+        raise FileNotFoundError(
+            "Could not locate MicroPython DHCP server source: {}".format(
+                source
+            )
+        )
+
+    data = source.read_text(
+        encoding="utf-8"
+    )
+
+    old_guard = "#if MICROPY_PY_LWIP"
+    new_guard = (
+        "#if MICROPY_PY_LWIP || "
+        "MICROPY_PY_NETWORK_USBD_NCM_DHCP_SERVER"
+    )
+
+    if new_guard in data:
+        print(
+            "ESP32 USB-NCM DHCP server compatibility patch "
+            "already applied."
+        )
+        return
+
+    count = data.count(old_guard)
+
+    if count != 1:
+        raise RuntimeError(
+            "Expected exactly one MICROPY_PY_LWIP guard in {}; "
+            "found {}".format(
+                source,
+                count,
+            )
+        )
+
+    source.write_text(
+        data.replace(
+            old_guard,
+            new_guard,
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    print(
+        "Applied ESP32 USB-NCM DHCP server compatibility patch:"
+    )
+    print(
+        "  shared/netutils/dhcpserver.c now builds when"
+    )
+    print(
+        "  MICROPY_PY_NETWORK_USBD_NCM_DHCP_SERVER is enabled"
+    )
+    print(
+        "  MICROPY_PY_LWIP remains disabled globally on ESP32"
+    )
+
+
 def find_firmware_bin(esp32_dir, board_name, variant):
     expected = (
         esp32_dir
@@ -1082,6 +1160,13 @@ def main():
     )
 
     patch_esp32_usbd_ncm_port_compat(
+        micropython_dir,
+    )
+
+    # The shared DHCP server is normally compiled only for ports that set
+    # MICROPY_PY_LWIP. ESP32 uses ESP-IDF lwIP instead, so explicitly enable
+    # this helper implementation for the USB-NCM DHCP-server feature only.
+    patch_dhcpserver_for_esp32_ncm(
         micropython_dir,
     )
 
