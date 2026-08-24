@@ -1,4 +1,4 @@
-name: Build and Publish Custom MicroPython
+name: Build and Publish MicroPython LILYGO_T_RELAY_S3_NCM
 
 on:
   workflow_dispatch:
@@ -14,12 +14,12 @@ permissions:
   contents: write
 
 concurrency:
-  group: sprinklers1-micropython-release
+  group: micropython-lilygo-t-relay-s3-ncm-release
   cancel-in-progress: false
 
 jobs:
   build-and-release:
-    name: Build and publish custom MicroPython runtime
+    name: Build and publish MicroPython LILYGO_T_RELAY_S3_NCM
     runs-on: ubuntu-latest
 
     steps:
@@ -75,8 +75,8 @@ jobs:
 
           values = {
               "version": version,
-              "tag": "micropython-v" + version,
-              "asset_name": "T_RELAY_S3_NCM-SPIRAM_OCT-v" + version + ".bin",
+              "tag": "micropython-LILYGO_T_RELAY_S3_NCM-v" + version,
+              "asset_name": "LILYGO_T_RELAY_S3_NCM-SPIRAM_OCT-v" + version + ".bin",
           }
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
@@ -93,15 +93,15 @@ jobs:
         run: |
           python firmware/tools/build_micropython_ncm.py \
             --bootstrap \
-            --work-dir "$HOME/sprinklers1-micropython-build"
+            --work-dir "$HOME/micropython-lilygo-t-relay-s3-ncm-build"
 
       - name: Upload ESP-IDF failure logs
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: micropython-esp-idf-failure-logs
+          name: micropython-LILYGO_T_RELAY_S3_NCM-esp-idf-failure-logs
           path: |
-            /home/runner/sprinklers1-micropython-build/micropython/ports/esp32/build-*/log/
+            /home/runner/micropython-lilygo-t-relay-s3-ncm-build/micropython/ports/esp32/build-*/log/
           if-no-files-found: ignore
           retention-days: 14
 
@@ -113,7 +113,7 @@ jobs:
           mkdir -p firmware/dist/micropython/release
 
           cp \
-            firmware/dist/micropython/T_RELAY_S3_NCM-SPIRAM_OCT.bin \
+            firmware/dist/micropython/LILYGO_T_RELAY_S3_NCM-SPIRAM_OCT.bin \
             "firmware/dist/micropython/release/$ASSET_NAME"
 
           test -s "firmware/dist/micropython/release/$ASSET_NAME"
@@ -131,8 +131,8 @@ jobs:
             "firmware/dist/micropython/release/$ASSET_NAME" \
             --repo "${{ github.repository }}" \
             --target "${{ github.sha }}" \
-            --title "Sprinklers1 custom MicroPython v$VERSION" \
-            --notes "Custom MicroPython runtime for the LILYGO T-Relay ESP32-S3 with Octal PSRAM and USB CDC-NCM networking."
+            --title "MicroPython LILYGO_T_RELAY_S3_NCM v$VERSION" \
+            --notes "MicroPython build for LILYGO T-Relay ESP32-S3 with Octal PSRAM and USB CDC-NCM networking."
 
       - name: Increment custom MicroPython release version
         shell: bash
@@ -177,5 +177,5 @@ jobs:
             exit 0
           fi
 
-          git commit -m "Bump custom MicroPython version after micropython-v$VERSION release"
+          git commit -m "Bump LILYGO_T_RELAY_S3_NCM MicroPython build version after v$VERSION release"
           git push origin "HEAD:$BRANCH_NAME"

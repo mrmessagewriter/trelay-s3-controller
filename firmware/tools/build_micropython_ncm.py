@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Build the Sprinklers1 custom MicroPython runtime with USB CDC-NCM.
+Build the LILYGO_T_RELAY_S3_NCM MicroPython runtime with USB CDC-NCM.
 
 The tool is designed to work:
 - directly on Linux, including GitHub Actions Ubuntu runners;
@@ -12,13 +12,13 @@ Repository layout:
       micropython/
         micropython_build.json
         boards/
-          T_RELAY_S3_NCM/
+          LILYGO_T_RELAY_S3_NCM/
       tools/
         build_micropython_ncm.py
 
 Output:
 
-    firmware/dist/micropython/T_RELAY_S3_NCM-SPIRAM_OCT.bin
+    firmware/dist/micropython/LILYGO_T_RELAY_S3_NCM-SPIRAM_OCT.bin
 
 First local Windows build:
 
@@ -63,7 +63,7 @@ def parse_args():
         default=None,
         help=(
             "Build workspace. Defaults to "
-            "~/.cache/sprinklers1-micropython-build."
+            "~/.cache/micropython-lilygo-t-relay-s3-ncm-build."
         ),
     )
 
@@ -558,7 +558,7 @@ def main():
         else (
             Path.home()
             / ".cache"
-            / "sprinklers1-micropython-build"
+            / "micropython-lilygo-t-relay-s3-ncm-build"
         )
     )
 
@@ -569,7 +569,7 @@ def main():
 
     print()
     print("========================================")
-    print(" Sprinklers1 Custom MicroPython Build")
+    print(" MicroPython LILYGO_T_RELAY_S3_NCM Build")
     print("========================================")
     print()
     print("Repository:      ", repo_root)

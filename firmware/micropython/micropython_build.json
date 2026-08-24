@@ -1,9 +1,9 @@
 {
-  "board": "T_RELAY_S3_NCM",
+  "board": "LILYGO_T_RELAY_S3_NCM",
   "variant": "SPIRAM_OCT",
   "micropython_repository": "https://github.com/micropython/micropython.git",
   "micropython_ref": "master",
   "esp_idf_repository": "https://github.com/espressif/esp-idf.git",
   "esp_idf_ref": "v5.3",
-  "output_filename": "T_RELAY_S3_NCM-SPIRAM_OCT.bin"
+  "output_filename": "LILYGO_T_RELAY_S3_NCM-SPIRAM_OCT.bin"
 }
