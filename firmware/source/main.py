@@ -2,10 +2,11 @@
 # LilyGo T-Relay ESP32-S3
 # MicroPython + Microdot
 #
-# Station-mode-only build:
-#   - Connects to an EXISTING Wi-Fi network
-#   - Does NOT create an access point
-#   - Initializes Wi-Fi before importing Microdot
+# Dual-network HTTP build:
+#   - Connects to an EXISTING Wi-Fi network when available
+#   - Enables USB CDC-NCM networking when supported by the runtime
+#   - Does NOT create a Wi-Fi access point
+#   - Serves the same HTTP UI/API over Wi-Fi and USB
 #   - Controls six relays through the 74HC595
 #   - Provides REST API
 #   - Serves:
@@ -82,6 +83,7 @@ output_state = 0x00
 
 config = None
 station = None
+usb_ncm = None
 
 app = None
 send_file = None
@@ -551,6 +553,133 @@ def test_relays(delay_ms=750):
     print()
 
 # ============================================================
+# USB CDC-NCM NETWORK
+# ============================================================
+
+def _interface_ipv4(interface):
+    """Return an interface IPv4 address without a prefix length."""
+
+    if interface is None:
+        return ""
+
+    try:
+        value = interface.ipconfig("addr4")
+
+        if isinstance(value, str):
+            if "/" in value:
+                return value.split("/")[0]
+
+            return value
+
+        # Some ports may return a tuple/list of addresses.
+        if isinstance(value, (tuple, list)) and value:
+            value = value[0]
+
+            if isinstance(value, str):
+                if "/" in value:
+                    return value.split("/")[0]
+
+                return value
+
+    except Exception:
+        pass
+
+    try:
+        value = interface.ifconfig()[0]
+
+        if isinstance(value, str):
+            return value
+
+    except Exception:
+        pass
+
+    return ""
+
+
+def initialize_usb_network():
+    """Initialize MicroPython USB CDC-NCM networking when available.
+
+    The NCM interface does not need a connected host before Microdot starts.
+    The HTTP listener binds to 0.0.0.0 and will accept USB traffic whenever
+    the host enumerates/configures the USB network adapter.
+    """
+
+    global usb_ncm
+
+    print()
+    print("============================")
+    print("USB CDC-NCM NETWORK")
+    print("============================")
+
+    try:
+        ncm_class = network.USBD_NCM
+
+    except AttributeError:
+        print()
+        print(
+            "USB NCM is not available in this MicroPython runtime."
+        )
+        usb_ncm = None
+        return False
+
+    try:
+        usb_ncm = ncm_class()
+
+        # The interface is normally active from boot, but make the intended
+        # application state explicit.
+        if not usb_ncm.active():
+            usb_ncm.active(True)
+
+        print()
+        print("USB NCM active:", usb_ncm.active())
+
+        try:
+            print(
+                "USB host connected:",
+                usb_ncm.isconnected()
+            )
+        except Exception:
+            pass
+
+        address = _interface_ipv4(usb_ncm)
+
+        if address:
+            print("USB IPv4:", address)
+        else:
+            print(
+                "USB IPv4 is not available yet; "
+                "the host may not have enumerated the NCM interface."
+            )
+
+        return bool(usb_ncm.active())
+
+    except Exception as e:
+        print()
+        print(
+            "Unable to initialize USB NCM:",
+            repr(e)
+        )
+
+        usb_ncm = None
+        return False
+
+
+def usb_ip():
+    return _interface_ipv4(usb_ncm)
+
+
+def usb_is_connected():
+
+    if usb_ncm is None:
+        return False
+
+    try:
+        return bool(usb_ncm.isconnected())
+    except Exception:
+        return False
+
+
+# ============================================================
 # WIFI
 # ============================================================
 
@@ -855,41 +984,60 @@ def connect_wifi():
 
 
 # ============================================================
-# CURRENT IP
+# NETWORK STATUS / ADDRESSES
 # ============================================================
 
-def current_ip():
+def wifi_ip():
+    return _interface_ipv4(station)
+
+
+def wifi_is_connected():
 
     if station is None:
-        return ""
-
-
-    try:
-
-        # Newer MicroPython.
-
-        value = station.ipconfig("addr4")
-
-        # Some versions return "IP/prefix".
-        if isinstance(value, str):
-
-            if "/" in value:
-                return value.split("/")[0]
-
-            return value
-
-    except:
-        pass
-
+        return False
 
     try:
+        return bool(station.isconnected())
+    except Exception:
+        return False
 
-        # Older MicroPython.
 
-        return station.ifconfig()[0]
+def current_ip():
+    """Return the preferred address for backward-compatible API/UI use.
 
-    except:
-        return ""
+    Prefer Wi-Fi when connected because it is normally reachable from the
+    LAN. Fall back to USB so the UI/API still has a useful address when Wi-Fi
+    is unavailable.
+    """
+
+    address = wifi_ip()
+
+    if address:
+        return address
+
+    return usb_ip()
+
+
+def get_network_status():
+
+    return {
+        "wifi": {
+            "available": station is not None,
+            "connected": wifi_is_connected(),
+            "ip": wifi_ip()
+        },
+
+        "usb": {
+            "available": usb_ncm is not None,
+            "connected": usb_is_connected(),
+            "active": (
+                bool(usb_ncm.active())
+                if usb_ncm is not None
+                else False
+            ),
+            "ip": usb_ip()
+        }
+    }
 
 
 # ============================================================
@@ -1848,8 +1996,13 @@ def get_status():
         "firmware":
             get_firmware_info(),
 
+        # "ip" is kept for backward compatibility. It prefers Wi-Fi and
+        # falls back to USB.
         "ip":
             current_ip(),
+
+        "network":
+            get_network_status(),
 
         "time":
             get_time_status(),
@@ -1886,54 +2039,38 @@ def schedule_reboot():
 # ============================================================
 # WEB SERVER
 #
-# Microdot is intentionally imported only AFTER Wi-Fi is up.
+# Microdot is imported after the network interfaces have been initialized.
+# The server binds to 0.0.0.0, so one socket accepts HTTP over Wi-Fi and USB.
 # ============================================================
 
 def initialize_web_server():
+    """Create Microdot and register all routes.
+
+    Do not write diagnostic output here.
+
+    On this board the USB CDC console and CDC-NCM network interface share the
+    same native USB/TinyUSB device. A blocking CDC write during startup must
+    never be allowed to prevent the HTTP server from reaching start_server().
+    Runtime diagnostics are available through /api/status instead.
+    """
 
     global app
     global send_file
 
-
     gc.collect()
-
-
-    print()
-    print(
-        "Memory before Microdot import:",
-        gc.mem_free()
-    )
-
 
     from microdot import Microdot
     from microdot import send_file as microdot_send_file
 
-
     send_file = microdot_send_file
 
-
     gc.collect()
-
-
-    print(
-        "Memory after Microdot import:",
-        gc.mem_free()
-    )
-
 
     app = Microdot()
 
-
     register_routes()
 
-
     gc.collect()
-
-
-    print(
-        "Memory after route registration:",
-        gc.mem_free()
-    )
 
 
 # ============================================================
@@ -2729,7 +2866,8 @@ async def periodic_time_sync_task():
             ntp_sync_interval_seconds()
         )
 
-        sync_time()
+        if wifi_is_connected():
+            sync_time()
 
         gc.collect()
 
@@ -2744,7 +2882,8 @@ async def periodic_weather_task():
             weather_refresh_interval_seconds()
         )
 
-        refresh_weather()
+        if wifi_is_connected():
+            refresh_weather()
 
         gc.collect()
 
@@ -2845,11 +2984,17 @@ def main():
 
 
     # --------------------------------------------------------
-    # Existing Wi-Fi network only.
-    # No AP fallback.
+    # Network interfaces.
+    #
+    # USB is initialized first and may be used for HTTP even when the
+    # configured Wi-Fi network is unavailable.  Wi-Fi is still used for
+    # upstream Internet services such as NTP and weather.
     # --------------------------------------------------------
 
-    if not connect_wifi():
+    usb_available = initialize_usb_network()
+    wifi_connected = connect_wifi()
+
+    if not usb_available and not wifi_connected:
 
         red_led(True)
         green_led(False)
@@ -2861,8 +3006,7 @@ def main():
 
         print()
         print(
-            "Could not connect to the configured "
-            "existing Wi-Fi network."
+            "Neither USB NCM nor Wi-Fi networking is available."
         )
 
         print(
@@ -2872,20 +3016,41 @@ def main():
         return
 
 
-    # Wi-Fi succeeded.
+    # --------------------------------------------------------
+    # Internet-dependent services.
+    #
+    # USB NCM is intentionally not assumed to provide a default gateway.
+    # NTP and weather remain tied to successful Wi-Fi connectivity.
+    # --------------------------------------------------------
 
-    # Synchronize the RTC from NTP. A failure does not prevent
-    # the relay controller or web server from starting.
-    resolve_weather_location_from_zip()
+    if wifi_connected:
 
-    sync_time()
+        # Synchronize the RTC from NTP. A failure does not prevent
+        # the relay controller or web server from starting.
+        resolve_weather_location_from_zip()
 
-    # Initialize and fetch weather. Failure does not stop
-    # relay control or the web server.
-    if initialize_weather():
-        refresh_weather()
+        sync_time()
 
-    # Load persistent events after time/weather services are ready.
+        # Initialize and fetch weather. Failure does not stop
+        # relay control or the web server.
+        if initialize_weather():
+            refresh_weather()
+
+    else:
+
+        print()
+        print(
+            "Wi-Fi is unavailable. HTTP will remain available over USB."
+        )
+
+        print(
+            "NTP and weather startup refresh were skipped."
+        )
+
+
+    # Load persistent events even if the clock is not synchronized.
+    # EventService already receives time_is_synchronized and can avoid
+    # treating an unsynchronized RTC as valid scheduler time.
     initialize_events()
 
     red_led(False)
@@ -2894,67 +3059,18 @@ def main():
 
     # --------------------------------------------------------
     # Web server
+    #
+    # Once USB NCM is active, avoid additional CDC-console output before
+    # starting Microdot.  CDC and NCM share the native USB/TinyUSB device;
+    # a blocked console write must not prevent HTTP startup.
     # --------------------------------------------------------
 
     initialize_web_server()
 
-
     gc.collect()
 
-
-    print()
-    print("============================")
-    print("WEB SERVER")
-    print("============================")
-
-    print()
-    print(
-        "Web UI:"
-    )
-
-    print(
-        "    http://" +
-        current_ip() +
-        "/"
-    )
-
-
-    print()
-    print(
-        "Settings:"
-    )
-
-    print(
-        "    http://" +
-        current_ip() +
-        "/setup"
-    )
-
-
-    print()
-    print(
-        "REST API:"
-    )
-
-    print(
-        "    http://" +
-        current_ip() +
-        "/api/status"
-    )
-
-
-    print()
-    print(
-        "Free memory before server:",
-        gc.mem_free()
-    )
-
-
-    print()
-    print("Starting Microdot...")
-    print()
-
-
+    # This call normally does not return. The server binds to 0.0.0.0,
+    # therefore the same listener accepts HTTP over both Wi-Fi and USB NCM.
     run_web_server()
 
 

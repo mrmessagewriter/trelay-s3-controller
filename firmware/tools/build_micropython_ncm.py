@@ -906,6 +906,87 @@ static mp_obj_t esp32_ncm_ipconfig(struct netif *netif, size_t n_args, const mp_
 
     data = data.replace(old_mac, new_mac, 1)
 
+    # The driver-facing RX callback now feeds tcpip_input(), which is the
+    # thread-safe lwIP ingress API for NO_SYS=0 ports. Do not hold the TCP/IP
+    # core lock while calling it; tcpip_input() will queue the frame to the
+    # TCP/IP thread itself.
+    old_recv = """    if (size) {
+        MICROPY_PY_LWIP_ENTER
+        struct pbuf *p = pbuf_alloc(PBUF_RAW, size, PBUF_POOL);
+        if (p == NULL) {
+            MICROPY_PY_LWIP_EXIT
+            // Return false without calling recv_renew: TinyUSB holds the buffer.
+            // NCM RX will stall until the host retransmits and memory is available.
+            return false;
+        }
+
+        // Copy buf to pbuf
+        pbuf_take(p, src, size);
+
+        if (netif->input(p, netif) != ERR_OK) {
+            pbuf_free(p);
+            ret = false;
+        }
+        MICROPY_PY_LWIP_EXIT
+    }"""
+
+    new_recv = """    if (size) {
+        struct pbuf *p = pbuf_alloc(PBUF_RAW, size, PBUF_POOL);
+        if (p == NULL) {
+            // Return false without calling recv_renew: TinyUSB holds the buffer.
+            // NCM RX will stall until the host retransmits and memory is available.
+            return false;
+        }
+
+        // Copy buf to pbuf.
+        pbuf_take(p, src, size);
+
+        // netif->input is tcpip_input on ESP32. It safely transfers ownership
+        // of the frame to lwIP's TCP/IP thread.
+        if (netif->input(p, netif) != ERR_OK) {
+            pbuf_free(p);
+            ret = false;
+        }
+    }"""
+
+    if old_recv not in data:
+        raise RuntimeError(
+            "Could not find USB-NCM RX callback body in {}".format(source)
+        )
+
+    data = data.replace(old_recv, new_recv, 1)
+
+    # TinyUSB asks the application to copy a packet into its own TX buffer.
+    # This callback can occur while the lwIP transmit path already owns the
+    # TCP/IP core lock. Taking the same non-recursive ESP-IDF lock here can
+    # deadlock the first outbound packet (including DHCP replies).
+    old_xmit = """uint16_t tud_network_xmit_cb(uint8_t *dst, void *ref, uint16_t arg) {
+    // copy from network stack packet pointer to dst.
+    (void)arg;
+    MICROPY_PY_LWIP_ENTER
+    struct pbuf *p = (struct pbuf *)ref;
+    uint16_t len = pbuf_copy_partial(p, dst, p->tot_len, 0);
+    MICROPY_PY_LWIP_EXIT
+    return len;
+}"""
+
+    new_xmit = """uint16_t tud_network_xmit_cb(uint8_t *dst, void *ref, uint16_t arg) {
+    // Copy from the lwIP pbuf into TinyUSB's transmit buffer.
+    //
+    // Do not lock the ESP-IDF lwIP core here. This callback may be reached
+    // from a transmit path which already owns that non-recursive lock.
+    (void)arg;
+    struct pbuf *p = (struct pbuf *)ref;
+    return pbuf_copy_partial(p, dst, p->tot_len, 0);
+}"""
+
+    if old_xmit not in data:
+        raise RuntimeError(
+            "Could not find USB-NCM TX callback body in {}".format(source)
+        )
+
+    data = data.replace(old_xmit, new_xmit, 1)
+
     source.write_text(data, encoding="utf-8")
 
     print()
@@ -914,7 +995,8 @@ static mp_obj_t esp32_ncm_ipconfig(struct netif *netif, size_t n_args, const mp_
     print("  ESP-IDF Ethernet MAC via esp_read_mac(..., ESP_MAC_ETH)")
     print("  ESP32-local ifconfig/ipconfig query helpers")
     print("  generic NIC registration disabled")
-    print("  RX routed through tcpip_input()")
+    print("  RX routed through tcpip_input() without nested core locking")
+    print("  TinyUSB TX callback avoids recursive lwIP core locking")
     print("  legacy TinyUSB link-state compatibility")
 
 
