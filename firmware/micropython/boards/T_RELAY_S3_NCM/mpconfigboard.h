@@ -21,6 +21,7 @@
 
 // Enable USB CDC-NCM networking. This exposes network.USBD_NCM.
 #define MICROPY_PY_NETWORK_USBD_NCM (1)
+#define MICROPY_PY_NETWORK_USBD_NCM_DHCP_SERVER (1)
 
 // Friendly USB strings.
 #define MICROPY_HW_USB_PRODUCT_FS_STRING "Sprinklers1 Controller"

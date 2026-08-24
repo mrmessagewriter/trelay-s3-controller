@@ -77,7 +77,7 @@ def parse_args():
 
 
 def run(command, cwd=None, env=None, capture=False):
-    print(">", " ".join(str(x) for x in command))
+    print(">", " ".join(str(x) for x in command), flush=True)
 
     return subprocess.run(
         command,
@@ -545,12 +545,16 @@ def main():
     print()
     print("Building USB-NCM + Octal-PSRAM MicroPython...")
 
+    # GitHub Actions logs should include the complete compiler/link command on
+    # failure.  Local builds remain quieter unless CI is set.
+    make_command = "make {}".format(board_args)
+    if os.environ.get("CI"):
+        make_command += " V=1"
+
     idf_shell(
         idf_dir,
         esp32_dir,
-        "make {}".format(
-            board_args
-        ),
+        make_command,
     )
 
     firmware_bin = find_firmware_bin(
@@ -588,4 +592,17 @@ def main():
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except subprocess.CalledProcessError as exc:
+        print()
+        print("========================================", file=sys.stderr)
+        print(" MicroPython build command failed", file=sys.stderr)
+        print("========================================", file=sys.stderr)
+        print("Exit code:", exc.returncode, file=sys.stderr)
+        print("Command:", " ".join(str(x) for x in exc.cmd), file=sys.stderr)
+        print(
+            "The compiler/CMake error is in the output immediately above this message.",
+            file=sys.stderr,
+        )
+        raise SystemExit(exc.returncode)

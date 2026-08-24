@@ -57,3 +57,17 @@ A user normally installs the custom MicroPython runtime only when:
 
 Normal Sprinklers1 application updates require only the application firmware
 release.
+## ESP32 DHCP integration
+
+`network.USBD_NCM` enables its small DHCP server by default so the host gets an
+address automatically.  The shared implementation lives in:
+
+```text
+shared/netutils/dhcpserver.c
+```
+
+The current ESP32 port does not include that source in its normal source list,
+so the `T_RELAY_S3_NCM` board definition adds it through `MICROPY_SOURCE_BOARD`.
+Without this addition, an NCM-enabled ESP32 build can reach the final build/link
+stage and then fail because the DHCP server symbols are missing.
+
