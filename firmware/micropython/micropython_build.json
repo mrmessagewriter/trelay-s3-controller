@@ -4,6 +4,6 @@
   "micropython_repository": "https://github.com/micropython/micropython.git",
   "micropython_ref": "master",
   "esp_idf_repository": "https://github.com/espressif/esp-idf.git",
-  "esp_idf_ref": "v5.3",
+  "esp_idf_ref": "v5.5.2",
   "output_filename": "LILYGO_T_RELAY_S3_NCM-SPIRAM_OCT.bin"
 }

@@ -244,6 +244,27 @@ def clone_repo(url, ref, destination, recursive=False):
         cwd=destination,
     )
 
+    # Builds can modify ESP-IDF component lockfiles.  Always restore the
+    # checkout to the requested revision before applying our custom board.
+    run(
+        [
+            "git",
+            "reset",
+            "--hard",
+            "FETCH_HEAD",
+        ],
+        cwd=destination,
+    )
+
+    run(
+        [
+            "git",
+            "clean",
+            "-ffd",
+        ],
+        cwd=destination,
+    )
+
     if recursive:
         run(
             [
