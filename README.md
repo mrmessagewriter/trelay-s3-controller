@@ -66,7 +66,9 @@ Octal PSRAM. Use the MicroPython ESP32-S3 **SPIRAM_OCT** build so the PSRAM is
 available to MicroPython.  
 This gives plenty of room 8MB is huge, and MicroPython is quite small.  This memory gives and storage gives plenty of space to play around in. 
 
-You can find it here: https://micropython.org/resources/firmware/ESP32_GENERIC_S3-SPIRAM_OCT-20260406-v1.28.0.bin
+This is the official version which is most compatible: https://micropython.org/resources/firmware/ESP32_GENERIC_S3-SPIRAM_OCT-20260406-v1.28.0.bin
+To simplify things you may also use:  https://github.com/mrmessagewriter/trelay-s3-controller/releases/download/micropython-LILYGO_T_RELAY_S3_NCM-v1.0.0/LILYGO_T_RELAY_S3_NCM-SPIRAM_OCT-v1.0.0.bin
+This a custom build of the same official version, but including the ability to handle HTTP over USB, which makes working on this project a bit easier, if things go wrong.  It's mainly for developers but can be used by anyone.
 
 ## Build
 
