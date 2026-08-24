@@ -49,7 +49,7 @@ jobs:
             dfu-util
 
       - name: Cache Espressif toolchain
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.espressif
           key: esp-idf-tools-${{ hashFiles('firmware/micropython/micropython_build.json') }}-esp32s3
@@ -79,31 +79,123 @@ jobs:
               "asset_name": "LILYGO_T_RELAY_S3_NCM-SPIRAM_OCT-v" + version + ".bin",
           }
 
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               for key, value in values.items():
-                  out.write(f"{key}={value}\n")
+                  output.write(f"{key}={value}\n")
 
           print("MicroPython runtime version:", version)
           print("Release tag:", values["tag"])
           print("Release asset:", values["asset_name"])
           PY
 
+      # Do not stop the job immediately when the build fails.  We need the
+      # following diagnostic steps to print ESP-IDF/Ninja's real error.
       - name: Build custom MicroPython runtime
+        id: micropython_build
+        continue-on-error: true
         shell: bash
         run: |
+          set -o pipefail
+
           python firmware/tools/build_micropython_ncm.py \
             --bootstrap \
-            --work-dir "$HOME/micropython-lilygo-t-relay-s3-ncm-build"
+            --work-dir "$HOME/micropython-lilygo-t-relay-s3-ncm-build" \
+            2>&1 | tee "$RUNNER_TEMP/micropython-build.log"
 
-      - name: Upload ESP-IDF failure logs
-        if: failure()
+      - name: Print ESP-IDF failure diagnostics
+        if: steps.micropython_build.outcome == 'failure'
+        shell: bash
+        run: |
+          set +e
+
+          BUILD_ROOT="$HOME/micropython-lilygo-t-relay-s3-ncm-build/micropython/ports/esp32"
+
+          echo
+          echo "============================================================"
+          echo " COMPLETE BUILD LOG - ERROR/FATAL/FAILED LINES"
+          echo "============================================================"
+
+          if [ -f "$RUNNER_TEMP/micropython-build.log" ]; then
+            grep -nEi \
+              '(^|[^a-z])(error:|fatal:|FAILED:|undefined reference|ninja: build stopped|CMake Error|make: \*\*\*)' \
+              "$RUNNER_TEMP/micropython-build.log" \
+              | tail -n 300 || true
+
+            echo
+            echo "============================================================"
+            echo " LAST 250 LINES OF COMPLETE BUILD LOG"
+            echo "============================================================"
+
+            tail -n 250 "$RUNNER_TEMP/micropython-build.log" || true
+          fi
+
+          echo
+          echo "============================================================"
+          echo " ESP-IDF GENERATED LOG FILES"
+          echo "============================================================"
+
+          find "$BUILD_ROOT" \
+            -type f \
+            \( \
+              -name 'idf_py_stderr_output_*' \
+              -o -name 'idf_py_stdout_output_*' \
+              -o -name 'CMakeError.log' \
+              -o -name 'CMakeOutput.log' \
+            \) \
+            -print \
+            2>/dev/null \
+            | sort \
+            | while IFS= read -r logfile; do
+                echo
+                echo "------------------------------------------------------------"
+                echo "$logfile"
+                echo "------------------------------------------------------------"
+
+                grep -nEi \
+                  '(^|[^a-z])(error:|fatal:|FAILED:|undefined reference|ninja: build stopped|CMake Error|make: \*\*\*)' \
+                  "$logfile" \
+                  | tail -n 200 || true
+
+                echo
+                echo "Last 160 lines:"
+                tail -n 160 "$logfile" || true
+              done
+
+          echo
+          echo "============================================================"
+          echo " BUILD DIRECTORY CONTENTS"
+          echo "============================================================"
+
+          find "$BUILD_ROOT" \
+            -maxdepth 3 \
+            -type f \
+            \( \
+              -name 'build.ninja' \
+              -o -name 'compile_commands.json' \
+              -o -name 'sdkconfig' \
+            \) \
+            -print \
+            2>/dev/null || true
+
+      - name: Upload MicroPython failure diagnostics
+        if: steps.micropython_build.outcome == 'failure'
         uses: actions/upload-artifact@v7
         with:
-          name: micropython-LILYGO_T_RELAY_S3_NCM-esp-idf-failure-logs
+          name: micropython-LILYGO_T_RELAY_S3_NCM-failure-diagnostics
           path: |
+            ${{ runner.temp }}/micropython-build.log
             /home/runner/micropython-lilygo-t-relay-s3-ncm-build/micropython/ports/esp32/build-*/log/
-          if-no-files-found: ignore
+            /home/runner/micropython-lilygo-t-relay-s3-ncm-build/micropython/ports/esp32/build-*/submodules/log/
+          if-no-files-found: warn
           retention-days: 14
+          compression-level: 6
+
+      - name: Fail job after diagnostics
+        if: steps.micropython_build.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "The MicroPython build failed. Diagnostics were printed and uploaded above."
+          exit 1
 
       - name: Stage versioned MicroPython release asset
         shell: bash
