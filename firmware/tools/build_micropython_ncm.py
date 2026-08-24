@@ -908,84 +908,94 @@ static mp_obj_t esp32_ncm_ipconfig(struct netif *netif, size_t n_args, const mp_
 
     # The driver-facing RX callback now feeds tcpip_input(), which is the
     # thread-safe lwIP ingress API for NO_SYS=0 ports. Do not hold the TCP/IP
-    # core lock while calling it; tcpip_input() will queue the frame to the
-    # TCP/IP thread itself.
-    old_recv = """    if (size) {
-        MICROPY_PY_LWIP_ENTER
-        struct pbuf *p = pbuf_alloc(PBUF_RAW, size, PBUF_POOL);
-        if (p == NULL) {
-            MICROPY_PY_LWIP_EXIT
-            // Return false without calling recv_renew: TinyUSB holds the buffer.
-            // NCM RX will stall until the host retransmits and memory is available.
-            return false;
-        }
+    # core lock while calling it. Patch structurally by function name instead
+    # of matching the entire upstream function body verbatim.
 
-        // Copy buf to pbuf
-        pbuf_take(p, src, size);
+    def strip_lwip_lock_lines_from_function(source_text, signature):
+        function_start = source_text.find(signature)
 
-        if (netif->input(p, netif) != ERR_OK) {
-            pbuf_free(p);
-            ret = false;
-        }
-        MICROPY_PY_LWIP_EXIT
-    }"""
+        if function_start < 0:
+            raise RuntimeError(
+                "Could not find function {} in {}".format(
+                    signature,
+                    source,
+                )
+            )
 
-    new_recv = """    if (size) {
-        struct pbuf *p = pbuf_alloc(PBUF_RAW, size, PBUF_POOL);
-        if (p == NULL) {
-            // Return false without calling recv_renew: TinyUSB holds the buffer.
-            // NCM RX will stall until the host retransmits and memory is available.
-            return false;
-        }
+        brace_start = source_text.find("{", function_start)
 
-        // Copy buf to pbuf.
-        pbuf_take(p, src, size);
+        if brace_start < 0:
+            raise RuntimeError(
+                "Could not find opening brace for {}".format(signature)
+            )
 
-        // netif->input is tcpip_input on ESP32. It safely transfers ownership
-        // of the frame to lwIP's TCP/IP thread.
-        if (netif->input(p, netif) != ERR_OK) {
-            pbuf_free(p);
-            ret = false;
-        }
-    }"""
+        depth = 0
+        function_end = None
 
-    if old_recv not in data:
-        raise RuntimeError(
-            "Could not find USB-NCM RX callback body in {}".format(source)
+        for index in range(brace_start, len(source_text)):
+            char = source_text[index]
+
+            if char == "{":
+                depth += 1
+
+            elif char == "}":
+                depth -= 1
+
+                if depth == 0:
+                    function_end = index + 1
+                    break
+
+        if function_end is None:
+            raise RuntimeError(
+                "Could not find closing brace for {}".format(signature)
+            )
+
+        function_text = source_text[function_start:function_end]
+
+        original = function_text
+
+        filtered_lines = []
+
+        for line in function_text.splitlines(True):
+            stripped = line.strip()
+
+            if stripped in (
+                "MICROPY_PY_LWIP_ENTER",
+                "MICROPY_PY_LWIP_EXIT",
+            ):
+                continue
+
+            filtered_lines.append(line)
+
+        function_text = "".join(filtered_lines)
+
+        if function_text == original:
+            print(
+                "No nested lwIP lock lines found in {}; "
+                "nothing to remove.".format(signature)
+            )
+        else:
+            print(
+                "Removed nested lwIP core locking from {}".format(
+                    signature
+                )
+            )
+
+        return (
+            source_text[:function_start]
+            + function_text
+            + source_text[function_end:]
         )
 
-    data = data.replace(old_recv, new_recv, 1)
+    data = strip_lwip_lock_lines_from_function(
+        data,
+        "bool tud_network_recv_cb(",
+    )
 
-    # TinyUSB asks the application to copy a packet into its own TX buffer.
-    # This callback can occur while the lwIP transmit path already owns the
-    # TCP/IP core lock. Taking the same non-recursive ESP-IDF lock here can
-    # deadlock the first outbound packet (including DHCP replies).
-    old_xmit = """uint16_t tud_network_xmit_cb(uint8_t *dst, void *ref, uint16_t arg) {
-    // copy from network stack packet pointer to dst.
-    (void)arg;
-    MICROPY_PY_LWIP_ENTER
-    struct pbuf *p = (struct pbuf *)ref;
-    uint16_t len = pbuf_copy_partial(p, dst, p->tot_len, 0);
-    MICROPY_PY_LWIP_EXIT
-    return len;
-}"""
-
-    new_xmit = """uint16_t tud_network_xmit_cb(uint8_t *dst, void *ref, uint16_t arg) {
-    // Copy from the lwIP pbuf into TinyUSB's transmit buffer.
-    //
-    // Do not lock the ESP-IDF lwIP core here. This callback may be reached
-    // from a transmit path which already owns that non-recursive lock.
-    (void)arg;
-    struct pbuf *p = (struct pbuf *)ref;
-    return pbuf_copy_partial(p, dst, p->tot_len, 0);
-}"""
-
-    if old_xmit not in data:
-        raise RuntimeError(
-            "Could not find USB-NCM TX callback body in {}".format(source)
-        )
-
-    data = data.replace(old_xmit, new_xmit, 1)
+    data = strip_lwip_lock_lines_from_function(
+        data,
+        "uint16_t tud_network_xmit_cb(",
+    )
 
     source.write_text(data, encoding="utf-8")
 
