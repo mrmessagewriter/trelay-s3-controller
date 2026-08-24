@@ -1087,6 +1087,38 @@ def patch_dhcpserver_for_esp32_ncm(micropython_dir):
     )
 
 
+
+def patch_esp32_ncm_tx_readiness(micropython_dir):
+    """Use tud_mounted() instead of tud_ready() for ESP32 NCM TX."""
+
+    source = micropython_dir / "extmod" / "network_usbd_ncm.c"
+
+    if not source.is_file():
+        raise FileNotFoundError(
+            "Could not locate MicroPython USB-NCM source: {}".format(source)
+        )
+
+    data = source.read_text(encoding="utf-8")
+
+    old = "if (!tud_ready() || !tud_network_can_xmit(p->tot_len)) {"
+    new = "if (!tud_mounted() || !tud_network_can_xmit(p->tot_len)) {"
+
+    if new in data:
+        print("ESP32 NCM TX readiness patch already applied (tud_mounted).")
+        return
+
+    if old not in data:
+        raise RuntimeError(
+            "Could not find NCM TX readiness condition in {}".format(source)
+        )
+
+    source.write_text(data.replace(old, new, 1), encoding="utf-8")
+
+    print("Applied ESP32 USB-NCM TX readiness compatibility patch:")
+    print("  linkoutput_fn now uses tud_mounted() instead of tud_ready()")
+    print("  prevents initial ARP/DHCP replies being dropped after enumeration")
+
+
 def find_firmware_bin(esp32_dir, board_name, variant):
     expected = (
         esp32_dir
@@ -1259,6 +1291,10 @@ def main():
     # MICROPY_PY_LWIP. ESP32 uses ESP-IDF lwIP instead, so explicitly enable
     # this helper implementation for the USB-NCM DHCP-server feature only.
     patch_dhcpserver_for_esp32_ncm(
+        micropython_dir,
+    )
+
+    patch_esp32_ncm_tx_readiness(
         micropython_dir,
     )
 
