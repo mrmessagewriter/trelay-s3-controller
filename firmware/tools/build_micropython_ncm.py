@@ -519,6 +519,171 @@ def print_idf_failure_logs(esp32_dir, board_name, variant):
             )
 
 
+
+def patch_tinyusb_ncm_descriptor_compat(micropython_dir, esp32_dir):
+    """Adapt MicroPython's NCM descriptor call to the ESP32 TinyUSB fork.
+
+    Current MicroPython master uses the newer TinyUSB NCM descriptor macro:
+
+        TUD_CDC_NCM_DESCRIPTOR(..., mtu, interval, capabilities)
+
+    The TinyUSB fork pinned by the ESP32-S3 dependency lockfile may still
+    provide the older form:
+
+        TUD_CDC_NCM_DESCRIPTOR(..., mtu)
+
+    In that older macro the notification interval is already hard-coded to
+    50 and the NCM capabilities byte is already hard-coded to 0.  Therefore
+    removing the final ", 50, 0" from MicroPython's descriptor call preserves
+    the same descriptor values.
+
+    This patch is applied only when the installed managed TinyUSB component
+    is positively detected as having the 9-argument macro.
+    """
+
+    import re
+
+    tinyusb_header = (
+        esp32_dir
+        / "managed_components"
+        / "espressif__tinyusb"
+        / "src"
+        / "device"
+        / "usbd.h"
+    )
+
+    descriptor_source = (
+        micropython_dir
+        / "shared"
+        / "tinyusb"
+        / "mp_usbd_descriptor.c"
+    )
+
+    if not tinyusb_header.is_file():
+        raise FileNotFoundError(
+            "Could not locate ESP32 managed TinyUSB header: {}".format(
+                tinyusb_header
+            )
+        )
+
+    if not descriptor_source.is_file():
+        raise FileNotFoundError(
+            "Could not locate MicroPython USB descriptor source: {}".format(
+                descriptor_source
+            )
+        )
+
+    header_text = tinyusb_header.read_text(
+        encoding="utf-8",
+        errors="replace",
+    )
+
+    match = re.search(
+        r"#define\s+TUD_CDC_NCM_DESCRIPTOR\s*\(([^)]*)\)",
+        header_text,
+    )
+
+    if not match:
+        raise RuntimeError(
+            "Could not determine TUD_CDC_NCM_DESCRIPTOR signature from {}".format(
+                tinyusb_header
+            )
+        )
+
+    macro_args = [
+        item.strip()
+        for item in match.group(1).split(",")
+        if item.strip()
+    ]
+
+    arg_count = len(macro_args)
+
+    print()
+    print(
+        "TinyUSB TUD_CDC_NCM_DESCRIPTOR arguments:",
+        arg_count,
+    )
+
+    if arg_count >= 11:
+        print(
+            "TinyUSB provides the newer NCM descriptor macro; "
+            "no compatibility patch is required."
+        )
+        return
+
+    if arg_count != 9:
+        raise RuntimeError(
+            "Unsupported TUD_CDC_NCM_DESCRIPTOR signature: "
+            "{} arguments".format(
+                arg_count
+            )
+        )
+
+    source_text = descriptor_source.read_text(
+        encoding="utf-8",
+    )
+
+    old_fragment = (
+        "USBD_NCM_IN_OUT_MAX_SIZE, "
+        "CFG_TUD_NET_MTU, 50, 0)"
+    )
+
+    new_fragment = (
+        "USBD_NCM_IN_OUT_MAX_SIZE, "
+        "CFG_TUD_NET_MTU)"
+    )
+
+    count = source_text.count(
+        old_fragment
+    )
+
+    if count == 0:
+        # If the source has already been patched, accept it.
+        if new_fragment in source_text:
+            print(
+                "MicroPython NCM descriptor source is already "
+                "compatible with the 9-argument TinyUSB macro."
+            )
+            return
+
+        raise RuntimeError(
+            "TinyUSB uses the 9-argument NCM descriptor macro, but the "
+            "expected 11-argument MicroPython call was not found in {}".format(
+                descriptor_source
+            )
+        )
+
+    if count != 1:
+        raise RuntimeError(
+            "Expected exactly one MicroPython NCM descriptor call to patch; "
+            "found {}".format(
+                count
+            )
+        )
+
+    descriptor_source.write_text(
+        source_text.replace(
+            old_fragment,
+            new_fragment,
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    print(
+        "Applied ESP32 TinyUSB NCM descriptor compatibility patch:"
+    )
+    print(
+        "  11-argument MicroPython call -> 9-argument TinyUSB call"
+    )
+    print(
+        "  notification interval remains 50"
+    )
+    print(
+        "  NCM capabilities remain 0"
+    )
+
+
 def find_firmware_bin(esp32_dir, board_name, variant):
     expected = (
         esp32_dir
@@ -673,6 +838,14 @@ def main():
         "make {} submodules".format(
             board_args
         ),
+    )
+
+    # Current MicroPython master uses the newer 11-argument TinyUSB NCM
+    # descriptor macro, while the ESP32 managed TinyUSB fork can still expose
+    # the older 9-argument form.  Detect and adapt only when required.
+    patch_tinyusb_ncm_descriptor_compat(
+        micropython_dir,
+        esp32_dir,
     )
 
     print()
