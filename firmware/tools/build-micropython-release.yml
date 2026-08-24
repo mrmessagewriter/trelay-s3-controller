@@ -52,7 +52,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.espressif
-          key: esp-idf-tools-v5.5.2-esp32s3
+          key: esp-idf-tools-${{ hashFiles('firmware/micropython/micropython_build.json') }}-esp32s3
 
       - name: Read MicroPython release version
         id: runtime
@@ -94,6 +94,16 @@ jobs:
           python firmware/tools/build_micropython_ncm.py \
             --bootstrap \
             --work-dir "$HOME/sprinklers1-micropython-build"
+
+      - name: Upload ESP-IDF failure logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: micropython-esp-idf-failure-logs
+          path: |
+            /home/runner/sprinklers1-micropython-build/micropython/ports/esp32/build-*/log/
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Stage versioned MicroPython release asset
         shell: bash

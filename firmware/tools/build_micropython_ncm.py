@@ -386,6 +386,115 @@ def idf_shell(idf_dir, cwd, command):
     )
 
 
+def print_idf_failure_logs(esp32_dir, board_name, variant):
+    """Print the useful tail of ESP-IDF's generated stdout/stderr logs."""
+
+    build_dir = (
+        esp32_dir
+        / "build-{}-{}".format(
+            board_name,
+            variant,
+        )
+    )
+
+    log_dir = build_dir / "log"
+
+    if not log_dir.is_dir():
+        print(
+            "ESP-IDF log directory was not found:",
+            log_dir,
+            file=sys.stderr,
+        )
+        return
+
+    log_files = sorted(
+        list(log_dir.glob("idf_py_stderr_output_*"))
+        + list(log_dir.glob("idf_py_stdout_output_*")),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+
+    if not log_files:
+        print(
+            "No ESP-IDF idf_py output logs were found in {}".format(
+                log_dir
+            ),
+            file=sys.stderr,
+        )
+        return
+
+    print()
+    print(
+        "========================================",
+        file=sys.stderr,
+    )
+    print(
+        " ESP-IDF diagnostic log tail",
+        file=sys.stderr,
+    )
+    print(
+        "========================================",
+        file=sys.stderr,
+    )
+
+    for path in log_files[:4]:
+        print()
+        print(
+            "--- {} ---".format(path.name),
+            file=sys.stderr,
+        )
+
+        try:
+            lines = path.read_text(
+                encoding="utf-8",
+                errors="replace",
+            ).splitlines()
+        except Exception as exc:
+            print(
+                "Unable to read {}: {}".format(
+                    path,
+                    exc,
+                ),
+                file=sys.stderr,
+            )
+            continue
+
+        # First print compiler/error lines if present.
+        interesting = [
+            line
+            for line in lines
+            if (
+                "error:" in line.lower()
+                or "fatal:" in line.lower()
+                or "undefined reference" in line.lower()
+                or "ninja: build stopped" in line.lower()
+            )
+        ]
+
+        if interesting:
+            print(
+                "Relevant error lines:",
+                file=sys.stderr,
+            )
+
+            for line in interesting[-80:]:
+                print(
+                    line,
+                    file=sys.stderr,
+                )
+
+        print(
+            "Last 120 log lines:",
+            file=sys.stderr,
+        )
+
+        for line in lines[-120:]:
+            print(
+                line,
+                file=sys.stderr,
+            )
+
+
 def find_firmware_bin(esp32_dir, board_name, variant):
     expected = (
         esp32_dir
@@ -551,11 +660,19 @@ def main():
     if os.environ.get("CI"):
         make_command += " V=1"
 
-    idf_shell(
-        idf_dir,
-        esp32_dir,
-        make_command,
-    )
+    try:
+        idf_shell(
+            idf_dir,
+            esp32_dir,
+            make_command,
+        )
+    except subprocess.CalledProcessError:
+        print_idf_failure_logs(
+            esp32_dir,
+            config["board"],
+            config["variant"],
+        )
+        raise
 
     firmware_bin = find_firmware_bin(
         esp32_dir,
