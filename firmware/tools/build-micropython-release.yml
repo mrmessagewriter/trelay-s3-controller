@@ -49,7 +49,7 @@ jobs:
             dfu-util
 
       - name: Cache Espressif toolchain
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.espressif
           key: esp-idf-tools-${{ hashFiles('firmware/micropython/micropython_build.json') }}-esp32s3
@@ -95,13 +95,48 @@ jobs:
             --bootstrap \
             --work-dir "$HOME/micropython-lilygo-t-relay-s3-ncm-build"
 
+      - name: Print ESP-IDF failure diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          BUILD_ROOT="$HOME/micropython-lilygo-t-relay-s3-ncm-build/micropython/ports/esp32"
+
+          echo "============================================================"
+          echo " ESP-IDF / Ninja failure diagnostics"
+          echo "============================================================"
+
+          echo
+          echo "Relevant error lines:"
+          grep -RniE \
+            'FAILED:|error:|fatal:|undefined reference|collect2:|ninja: build stopped|Traceback' \
+            "$BUILD_ROOT"/build-* \
+            2>/dev/null \
+            | tail -n 300 \
+            || true
+
+          echo
+          echo "ESP-IDF generated log tails:"
+
+          while IFS= read -r -d '' file; do
+            echo
+            echo "------------------------------------------------------------"
+            echo "$file"
+            echo "------------------------------------------------------------"
+            tail -n 250 "$file" || true
+          done < <(
+            find "$BUILD_ROOT" \
+              -type f \
+              \( -name 'idf_py_stderr_output_*' -o -name 'idf_py_stdout_output_*' \) \
+              -print0 2>/dev/null
+          )
+
       - name: Upload ESP-IDF failure logs
         if: failure()
         uses: actions/upload-artifact@v7
         with:
           name: micropython-LILYGO_T_RELAY_S3_NCM-esp-idf-failure-logs
           path: |
-            /home/runner/micropython-lilygo-t-relay-s3-ncm-build/micropython/ports/esp32/build-*/log/
+            /home/runner/micropython-lilygo-t-relay-s3-ncm-build/micropython/ports/esp32/build-*/**/log/
           if-no-files-found: ignore
           retention-days: 14
 

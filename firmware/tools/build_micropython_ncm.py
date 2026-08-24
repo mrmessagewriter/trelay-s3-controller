@@ -428,17 +428,20 @@ def print_idf_failure_logs(esp32_dir, board_name, variant):
         )
         return
 
+    # ESP-IDF writes logs in both the main build log directory and nested
+    # directories such as build-.../submodules/log. Search recursively so a
+    # failure in either phase is visible.
     log_files = sorted(
-        list(log_dir.glob("idf_py_stderr_output_*"))
-        + list(log_dir.glob("idf_py_stdout_output_*")),
+        list(build_dir.rglob("idf_py_stderr_output_*"))
+        + list(build_dir.rglob("idf_py_stdout_output_*")),
         key=lambda path: path.stat().st_mtime,
         reverse=True,
     )
 
     if not log_files:
         print(
-            "No ESP-IDF idf_py output logs were found in {}".format(
-                log_dir
+            "No ESP-IDF idf_py output logs were found under {}".format(
+                build_dir
             ),
             file=sys.stderr,
         )
@@ -679,7 +682,10 @@ def main():
     # failure.  Local builds remain quieter unless CI is set.
     make_command = "make {}".format(board_args)
     if os.environ.get("CI"):
-        make_command += " V=1"
+        # MicroPython's ESP32 Makefile checks BUILD_VERBOSE=1 and then passes
+        # --verbose through to idf.py.  V=1 only affects Make's own command
+        # echoing and does not enable idf.py/Ninja verbose output.
+        make_command += " BUILD_VERBOSE=1"
 
     try:
         idf_shell(
