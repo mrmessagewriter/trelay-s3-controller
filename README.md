@@ -1,7 +1,7 @@
-# Sprinklers1
+# TRelay S3 Controller
 
-Sprinklers1 is a MicroPython-based Wi-Fi sprinkler/relay controller for the
-LILYGO T-Relay ESP32-S3.
+TRelay S3 Controller is a MicroPython-based Wi-Fi sprinkler/relay controller for the
+LILYGO T-RelayS3  (ESP32-S3)
 
 The project currently provides:
 
@@ -16,6 +16,16 @@ The project currently provides:
 - A Microdot web interface and REST API.
 - Versioned event records with automatic migrations.
 - Uncompressed ZIP-based firmware deployment with an embedded firmware manifest.
+- REST API for direct control of the relays, while this works, it is not very tested.
+- Resizing for the phone, works, but is still a bit of work in progress.
+
+What it doesn't provide:
+ - User Authentication
+ - Cross Service Authentication
+ - OTA firmware updates
+ - Paid service or even an Unpaid service, the security for the device to the outside world, will be your decision. 
+
+These are coming in later updates. 
 
 ## Repository layout
 
@@ -51,9 +61,12 @@ firmware/
 
 ## MicroPython requirement
 
-The LILYGO T-Relay ESP32-S3 used by this project has 16 MiB flash and 8 MiB
+The T-RelayS3 used by this project has 16 MiB flash and 8 MiB
 Octal PSRAM. Use the MicroPython ESP32-S3 **SPIRAM_OCT** build so the PSRAM is
-available to MicroPython.
+available to MicroPython.  
+This gives plenty of room 8MB is huge, and MicroPython is quite small.  This memory gives and storage gives plenty of space to play around in. 
+
+You can find it here: https://micropython.org/resources/firmware/ESP32_GENERIC_S3-SPIRAM_OCT-20260406-v1.28.0.bin
 
 ## Build
 
@@ -96,3 +109,29 @@ Firmware updates do not overwrite:
 events and the event log.
 
 See `firmware/docs/EVENTS_AND_PERSISTENCE.md`.
+
+## HTML UI:
+
+### Manual Control:
+On the main control panel, you can just turn on and off the different relays as you wish:
+<img width="654" height="270" alt="image" src="https://github.com/user-attachments/assets/21d336d7-327f-4b98-abf4-bc7f3cd20298" />
+
+### Events: 
+Quick view of the next 3 upcoming events:
+<img width="674" height="314" alt="image" src="https://github.com/user-attachments/assets/7e3b1438-cde1-4ac6-b006-e69b9ebdbb18" />
+
+Add and remove events for turning the Relays on and Off, while this project is mainly focused toward Sprinklers being turned on and off, this can be used for any purpose you need to schedule turning on and off a Relay.  
+<img width="738" height="641" alt="image" src="https://github.com/user-attachments/assets/650a2fbc-8892-4b04-910a-8ed6cfcc2fde" />
+
+See which events were successful, skipped, or failed all together.  
+<img width="661" height="327" alt="image" src="https://github.com/user-attachments/assets/863a60ab-fbf9-4b15-9503-dce2a4ceb956" />
+
+### Weather:
+View the weather on the main control panel
+<img width="655" height="189" alt="image" src="https://github.com/user-attachments/assets/1fb7c6ff-10bf-48e2-89b8-7bf638366f7d" />
+
+Adjust setting to get weather in your area, you can choose to use zipcode, or if outside the US, just the Latitude and Longitude.  
+<img width="475" height="532" alt="image" src="https://github.com/user-attachments/assets/403ae446-aeb8-423f-ac52-45149eebea00" />
+
+When adding an event, your event will be filtered by the weather values, if you wish.  
+<img width="718" height="652" alt="image" src="https://github.com/user-attachments/assets/4b2039f1-0082-440b-b8b9-3ce762852126" />
