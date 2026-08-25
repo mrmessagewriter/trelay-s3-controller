@@ -1119,6 +1119,46 @@ def patch_esp32_ncm_tx_readiness(micropython_dir):
     print("  prevents initial ARP/DHCP replies being dropped after enumeration")
 
 
+
+def install_esp32_native_ncm_backend(custom_dir, micropython_dir):
+    """Replace the generic USB-NCM source with the ESP32 esp_netif backend."""
+
+    source = (
+        custom_dir
+        / "boards"
+        / "LILYGO_T_RELAY_S3_NCM"
+        / "network_usbd_ncm_esp32.c"
+    )
+
+    destination = (
+        micropython_dir
+        / "extmod"
+        / "network_usbd_ncm.c"
+    )
+
+    if not source.is_file():
+        raise FileNotFoundError(
+            "Missing ESP32 native NCM backend: {}".format(source)
+        )
+
+    if not destination.is_file():
+        raise FileNotFoundError(
+            "Missing upstream MicroPython NCM source target: {}".format(
+                destination
+            )
+        )
+
+    shutil.copy2(source, destination)
+
+    print()
+    print("Installed ESP32-native USB-NCM backend:")
+    print("  TinyUSB NCM framing/descriptors")
+    print("  ESP-IDF esp_netif Ethernet stack")
+    print("  ESP-IDF DHCP server")
+    print("  USB device address: 192.168.7.1/24")
+    print("  no USB default gateway")
+
+
 def find_firmware_bin(esp32_dir, board_name, variant):
     expected = (
         esp32_dir
@@ -1283,23 +1323,14 @@ def main():
         esp32_dir,
     )
 
-    patch_esp32_usbd_ncm_port_compat(
+    # Replace the generic lwIP USB-NCM implementation with the ESP32-native
+    # esp_netif backend. Descriptor compatibility is handled separately above.
+    install_esp32_native_ncm_backend(
+        custom_dir,
         micropython_dir,
     )
 
-    # The shared DHCP server is normally compiled only for ports that set
-    # MICROPY_PY_LWIP. ESP32 uses ESP-IDF lwIP instead, so explicitly enable
-    # this helper implementation for the USB-NCM DHCP-server feature only.
-    patch_dhcpserver_for_esp32_ncm(
-        micropython_dir,
-    )
-
-    patch_esp32_ncm_tx_readiness(
-        micropython_dir,
-    )
-
-    print()
-    print("Building USB-NCM + Octal-PSRAM MicroPython...")
+    print("Building ESP32-native USB-NCM + Octal-PSRAM MicroPython...")
 
     # GitHub Actions logs should include the complete compiler/link command on
     # failure.  Local builds remain quieter unless CI is set.
