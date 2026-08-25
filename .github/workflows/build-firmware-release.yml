@@ -1,4 +1,4 @@
-name: Build and Publish Application Firmware
+name: Build and Publish LilyGo T-Relay-S3 Controller Firmware
 
 on:
   workflow_dispatch:
@@ -9,17 +9,18 @@ on:
     paths:
       - "firmware/source/**"
       - "firmware/tools/build_firmware_deployment.py"
+      - ".github/workflows/build-firmware-release.yml"
 
 permissions:
   contents: write
 
 concurrency:
-  group: sprinklers1-application-release
+  group: lilygo-t-relay-s3-controller-firmware-release
   cancel-in-progress: false
 
 jobs:
   build-and-release:
-    name: Build and publish Sprinklers1 application firmware
+    name: Build and publish LilyGo T-Relay-S3 Controller Firmware
     runs-on: windows-latest
 
     steps:
@@ -77,92 +78,134 @@ jobs:
 
           $metadata = $metadataText | ConvertFrom-Json
           $version = [string]$metadata.version
-          $name = [string]$metadata.name
 
           if ([string]::IsNullOrWhiteSpace($version)) {
               throw "The built firmware does not contain a version."
           }
 
-          if ([string]::IsNullOrWhiteSpace($name)) {
-              $name = "Sprinklers1"
-          }
+          # Release branding is intentionally separate from the internal
+          # application/device name stored in firmware_info.json.
+          $releaseName = "LilyGo T-Relay-S3 Controller Firmware"
+          $packageBaseName = "LilyGo-T-Relay-S3-Controller-Firmware"
 
           $tag = "v$version"
-          $packageName = "$name-v$version.zip"
+          $packageName = "$packageBaseName-v$version.zip"
           $packagePath = "firmware\dist\$packageName"
 
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          "firmware_name=$name" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          "release_name=$releaseName" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "package_name=$packageName" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "package_path=$packagePath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
           Write-Host "Application firmware version: $version"
+          Write-Host "Release title: $releaseName v$version"
           Write-Host "Release tag: $tag"
           Write-Host "Release package: $packageName"
 
-      - name: Build application release package
+      - name: Build uncompressed application release package
         shell: pwsh
         env:
           PACKAGE_PATH: ${{ steps.firmware.outputs.package_path }}
         run: |
-          $staging = Join-Path $env:RUNNER_TEMP "sprinklers1-application-release"
+          @'
+          import os
+          import zipfile
+          from pathlib import Path
 
-          if (Test-Path $staging) {
-              Remove-Item -Path $staging -Recurse -Force
+          package_path = Path(os.environ["PACKAGE_PATH"])
+          package_path.parent.mkdir(parents=True, exist_ok=True)
+
+          if package_path.exists():
+              package_path.unlink()
+
+          files = {
+              "device_loader_main.py": Path(
+                  "firmware/source/device_loader_main.py"
+              ),
+              "main.zip": Path(
+                  "firmware/dist/main.zip"
+              ),
           }
 
-          New-Item -ItemType Directory -Path $staging | Out-Null
+          for archive_name, source_path in files.items():
+              if not source_path.is_file():
+                  raise SystemExit(
+                      "Missing release input: {}".format(source_path)
+                  )
 
-          Copy-Item `
-              "firmware\source\device_loader_main.py" `
-              (Join-Path $staging "device_loader_main.py")
+          with zipfile.ZipFile(
+              package_path,
+              "w",
+              compression=zipfile.ZIP_STORED,
+              allowZip64=True,
+          ) as archive:
+              for archive_name, source_path in files.items():
+                  archive.write(
+                      source_path,
+                      arcname=archive_name,
+                      compress_type=zipfile.ZIP_STORED,
+                  )
 
-          Copy-Item `
-              "firmware\dist\main.zip" `
-              (Join-Path $staging "main.zip")
+          print("Created uncompressed release package:")
+          print(package_path)
+          '@ | python -
 
-          if (Test-Path $env:PACKAGE_PATH) {
-              Remove-Item -Path $env:PACKAGE_PATH -Force
-          }
-
-          Compress-Archive `
-              -Path (Join-Path $staging "*") `
-              -DestinationPath $env:PACKAGE_PATH `
-              -CompressionLevel Optimal
-
-      - name: Verify application release package
+      - name: Verify uncompressed application release package
         shell: pwsh
         env:
           PACKAGE_PATH: ${{ steps.firmware.outputs.package_path }}
         run: |
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          @'
+          import io
+          import os
+          import zipfile
+          from pathlib import Path
 
-          $package = [System.IO.Compression.ZipFile]::OpenRead(
-              (Resolve-Path $env:PACKAGE_PATH).Path
-          )
+          package_path = Path(os.environ["PACKAGE_PATH"])
 
-          try {
-              $names = @($package.Entries | ForEach-Object { $_.FullName })
-
-              $required = @(
-                  "device_loader_main.py",
-                  "main.zip"
-              )
-
-              foreach ($name in $required) {
-                  if ($names -notcontains $name) {
-                      throw "Application release package is missing: $name"
-                  }
-              }
-
-              if ($names.Count -ne 2) {
-                  throw "Application release package should contain exactly 2 files; found $($names.Count)."
-              }
+          required = {
+              "device_loader_main.py",
+              "main.zip",
           }
-          finally {
-              $package.Dispose()
-          }
+
+          with zipfile.ZipFile(package_path, "r") as outer:
+              infos = outer.infolist()
+              names = {info.filename for info in infos}
+
+              if names != required:
+                  raise SystemExit(
+                      "Unexpected release package contents: {}".format(
+                          sorted(names)
+                      )
+                  )
+
+              for info in infos:
+                  if info.compress_type != zipfile.ZIP_STORED:
+                      raise SystemExit(
+                          "Compressed outer ZIP entry found: {}".format(
+                              info.filename
+                          )
+                      )
+
+              main_zip_bytes = outer.read("main.zip")
+
+          with zipfile.ZipFile(
+              io.BytesIO(main_zip_bytes),
+              "r",
+          ) as inner:
+              for info in inner.infolist():
+                  if info.compress_type != zipfile.ZIP_STORED:
+                      raise SystemExit(
+                          "Compressed main.zip entry found: {}".format(
+                              info.filename
+                          )
+                      )
+
+          print("Verified:")
+          print("  outer release ZIP: ZIP_STORED")
+          print("  inner main.zip:     ZIP_STORED")
+          '@ | python -
 
       - name: Publish application GitHub Release
         shell: pwsh
@@ -170,7 +213,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ steps.firmware.outputs.tag }}
           VERSION: ${{ steps.firmware.outputs.version }}
-          FIRMWARE_NAME: ${{ steps.firmware.outputs.firmware_name }}
+          RELEASE_NAME: ${{ steps.firmware.outputs.release_name }}
           PACKAGE_PATH: ${{ steps.firmware.outputs.package_path }}
         run: |
           gh release create `
@@ -178,7 +221,7 @@ jobs:
               $env:PACKAGE_PATH `
               --repo "${{ github.repository }}" `
               --target "${{ github.sha }}" `
-              --title "$env:FIRMWARE_NAME firmware v$env:VERSION" `
+              --title "$env:RELEASE_NAME v$env:VERSION" `
               --generate-notes
 
       - name: Commit next application firmware version

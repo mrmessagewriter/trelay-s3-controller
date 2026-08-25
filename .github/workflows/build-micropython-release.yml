@@ -188,7 +188,7 @@ jobs:
             /home/runner/micropython-lilygo-t-relay-s3-ncm-build/micropython/ports/esp32/build-*/submodules/log/
           if-no-files-found: warn
           retention-days: 14
-          compression-level: 6
+          compression-level: 0
 
       - name: Fail job after diagnostics
         if: steps.micropython_build.outcome == 'failure'
