@@ -161,13 +161,8 @@ static void ncm_start(void) {
         esp_netif_set_ip_info(ncm_obj.netif, &ncm_ip_info)
     );
 
-    ncm_raise_esp_error(
-        esp_netif_action_start(ncm_obj.netif, NULL, 0, NULL)
-    );
-
-    ncm_raise_esp_error(
-        esp_netif_action_connected(ncm_obj.netif, NULL, 0, NULL)
-    );
+    esp_netif_action_start(ncm_obj.netif, NULL, 0, NULL);
+    esp_netif_action_connected(ncm_obj.netif, NULL, 0, NULL);
 
     esp_err_t dhcp_err = esp_netif_dhcps_start(ncm_obj.netif);
     if (
@@ -193,13 +188,8 @@ static void ncm_stop(void) {
         ncm_raise_esp_error(dhcp_err);
     }
 
-    ncm_raise_esp_error(
-        esp_netif_action_disconnected(ncm_obj.netif, NULL, 0, NULL)
-    );
-
-    ncm_raise_esp_error(
-        esp_netif_action_stop(ncm_obj.netif, NULL, 0, NULL)
-    );
+    esp_netif_action_disconnected(ncm_obj.netif, NULL, 0, NULL);
+    esp_netif_action_stop(ncm_obj.netif, NULL, 0, NULL);
 
     ncm_obj.active = false;
 }
@@ -235,7 +225,7 @@ static void ncm_init(void) {
         sizeof(tud_network_mac_address)
     );
 
-    IP4_ADDR(
+    esp_netif_set_ip4_addr(
         &ncm_ip_info.ip,
         USB_NCM_IP_A,
         USB_NCM_IP_B,
@@ -243,7 +233,7 @@ static void ncm_init(void) {
         USB_NCM_IP_D
     );
 
-    IP4_ADDR(
+    esp_netif_set_ip4_addr(
         &ncm_ip_info.netmask,
         255,
         255,
@@ -255,7 +245,7 @@ static void ncm_init(void) {
      * No gateway: Windows must not route normal Internet traffic through the
      * sprinkler controller.
      */
-    IP4_ADDR(
+    esp_netif_set_ip4_addr(
         &ncm_ip_info.gw,
         0,
         0,
@@ -275,7 +265,6 @@ static void ncm_init(void) {
         .if_desc = "usb_ncm",
         .route_prio = 10,
         .bridge_info = NULL,
-        .mtu = 0,
     };
 
     static esp_netif_driver_ifconfig_t driver_cfg = {
