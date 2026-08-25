@@ -22,6 +22,7 @@ Subsequent builds can omit --bootstrap.  Add --clean for a full ESP32 rebuild.
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
 import platform
@@ -267,8 +268,160 @@ def patch_tinyusb_link_state_compat(esp32_dir):
 
     hdata = header.read_text(encoding="utf-8")
     sdata = source.read_text(encoding="utf-8")
-    if "tud_network_link_state" in hdata and "tud_network_link_state" in sdata:
-        print("TinyUSB already provides NCM link-state signaling.")
+
+    has_link_api = (
+        "tud_network_link_state" in hdata
+        and "tud_network_link_state" in sdata
+    )
+    has_2026_carrier_fix = (
+        "ncm_link_state_task" in sdata
+        and "usbd_defer_func(ncm_link_state_task" in sdata
+        and "link state notification deferred (interface not active)" in sdata
+        and "Reset notification state to send link state update when interface is re-activated" in sdata
+    )
+
+    if has_link_api and has_2026_carrier_fix:
+        print("TinyUSB already provides the 2026 NCM carrier/re-enumeration fix.")
+        return
+
+    if has_link_api:
+        print("TinyUSB has the NCM link API but lacks the 2026 carrier fix; patching it...")
+
+        # TinyUSB 0.19.0 introduced tud_network_link_state(), but its initial
+        # implementation can lose NETWORK_CONNECTION notifications and does
+        # not re-arm the notification sequence when the host switches the NCM
+        # data interface to alt=0 and back to alt=1. Windows uses that sequence
+        # when a network adapter is disabled/enabled, leaving the adapter stuck
+        # at NO-CARRIER. Backport the current TinyUSB behavior while retaining
+        # the rest of the pinned component.
+
+        if "tud_network_default_link_state_cb" not in hdata:
+            decl = "void tud_network_link_state(uint8_t rhport, bool is_up);"
+            if decl not in hdata:
+                raise RuntimeError("TinyUSB existing link-state declaration not found")
+            hdata = hdata.replace(
+                decl,
+                decl + "\n// Initial carrier state used after USB reset/re-enumeration."
+                + "\nbool tud_network_default_link_state_cb(void);",
+                1,
+            )
+
+        if "TU_ATTR_WEAK bool tud_network_default_link_state_cb(void)" not in sdata:
+            anchor_cb = "TU_ATTR_ALIGNED(4) static const ntb_parameters_t ntb_parameters = {"
+            if anchor_cb not in sdata:
+                raise RuntimeError("TinyUSB existing NCM NTB anchor not found")
+            weak_cb = (
+                "TU_ATTR_WEAK bool tud_network_default_link_state_cb(void) {\n"
+                "  return true;\n"
+                "}\n\n"
+            )
+            sdata = sdata.replace(anchor_cb, weak_cb + anchor_cb, 1)
+
+        old_link_fn = r'''/**
+ * Set the link state and send notification to host
+ */
+void tud_network_link_state(uint8_t rhport, bool is_up) {
+  TU_LOG_DRV("tud_network_link_state(%d, %d)\n", rhport, is_up);
+  if (ncm_interface.link_is_up == is_up) {
+    // No change in link state
+    return;
+  }
+
+  ncm_interface.link_is_up = is_up;
+
+  // Only send notification if we have an active data interface
+  if (ncm_interface.itf_data_alt != 1) {
+    TU_LOG_DRV("  link state notification skipped (interface not active)\n");
+    return;
+  }
+
+  // Reset notification state to send link state update
+  ncm_interface.notification_xmit_state = NOTIFICATION_CONNECTED;
+  // Trigger notification transmission
+  notification_xmit(rhport, false);
+}
+'''
+        new_link_fn = r'''/**
+ * usbd-task trampoline for tud_network_link_state().
+ *
+ * Keep all notification-state mutations on the TinyUSB task. If a carrier
+ * transition collides with an in-flight notification, resetting the state
+ * machine means the endpoint-completion callback will deliver the new state.
+ */
+static void ncm_link_state_task(void *param) {
+  uintptr_t const arg = (uintptr_t) param;
+  uint8_t const rhport = (uint8_t) (arg >> 1);
+  bool const is_up = (arg & 1u) != 0;
+
+  if (ncm_interface.link_is_up == is_up) {
+    return;
+  }
+
+  ncm_interface.link_is_up = is_up;
+
+  if (ncm_interface.itf_data_alt != 1) {
+    TU_LOG_DRV("  link state notification deferred (interface not active)\n");
+    return;
+  }
+
+  ncm_interface.notification_xmit_state = NOTIFICATION_SPEED;
+  notification_xmit(rhport, false);
+}
+
+/** Set the link state and notify the host. */
+void tud_network_link_state(uint8_t rhport, bool is_up) {
+  TU_LOG_DRV("tud_network_link_state(%d, %d)\n", rhport, is_up);
+  uintptr_t const arg = ((uintptr_t) rhport << 1) | (is_up ? 1u : 0u);
+  usbd_defer_func(ncm_link_state_task, (void *) arg, false);
+}
+'''
+        if old_link_fn in sdata:
+            sdata = sdata.replace(old_link_fn, new_link_fn, 1)
+        elif "usbd_defer_func(ncm_link_state_task" not in sdata:
+            raise RuntimeError("TinyUSB 0.19 link-state function anchor not found")
+
+        old_init = '''  // Default link state - can be configured via CFG_TUD_NCM_DEFAULT_LINK_UP
+  #ifdef CFG_TUD_NCM_DEFAULT_LINK_UP
+  ncm_interface.link_is_up = CFG_TUD_NCM_DEFAULT_LINK_UP;
+  #else
+  ncm_interface.link_is_up = true; // Default to link up if not set.
+  #endif
+'''
+        new_init = '''  // Query the application for the desired carrier state on every USB reset.
+  ncm_interface.link_is_up = tud_network_default_link_state_cb();
+'''
+        if old_init in sdata:
+            sdata = sdata.replace(old_init, new_init, 1)
+        elif "ncm_interface.link_is_up = tud_network_default_link_state_cb();" not in sdata:
+            raise RuntimeError("TinyUSB 0.19 netd_init carrier-state anchor not found")
+
+        old_set_itf = '''          if (ncm_interface.itf_data_alt == 1) {
+            tud_network_recv_renew_r(rhport);
+            notification_xmit(rhport, false);
+          }
+          tud_control_status(rhport, request);'''
+        new_set_itf = '''          if (ncm_interface.itf_data_alt == 1) {
+            tud_network_recv_renew_r(rhport);
+            notification_xmit(rhport, false);
+          } else {
+            // Re-arm speed + NETWORK_CONNECTION for the next alt=1.
+            // Windows Disable/Enable commonly performs alt=0 -> alt=1 without
+            // a full USB bus reset. Without this, the state remains DONE and
+            // the host never receives carrier-up again.
+            ncm_interface.notification_xmit_state = NOTIFICATION_SPEED;
+          }
+          tud_control_status(rhport, request);'''
+        if old_set_itf in sdata:
+            sdata = sdata.replace(old_set_itf, new_set_itf, 1)
+        elif (
+            "Re-arm speed + NETWORK_CONNECTION for the next alt=1" not in sdata
+            and "Reset notification state to send link state update when interface is re-activated" not in sdata
+        ):
+            raise RuntimeError("TinyUSB 0.19 SET_INTERFACE re-arm anchor not found")
+
+        header.write_text(hdata, encoding="utf-8")
+        source.write_text(sdata, encoding="utf-8")
+        print("TinyUSB 0.19 NCM carrier/re-enumeration fix applied.")
         return
 
     print("Backporting TinyUSB NCM link-state signaling API...")
@@ -650,6 +803,82 @@ static mp_obj_t esp32_ncm_ipconfig(struct netif *netif, size_t n_args, const mp_
     print("Applied minimal ESP32 glue to upstream MicroPython USBD_NCM.")
 
 
+
+def patch_upstream_ncm_ipv4_config(micropython_dir, address, netmask):
+    """Replace upstream NCM's 169.254.x.1 link-local address with a private LAN.
+
+    The shared MicroPython DHCP server derives lease addresses from the first
+    three octets of the NCM interface and assigns host addresses starting at
+    .16, so the configured subnet must contain .16 through .23 in the same /24.
+    """
+    try:
+        interface = ipaddress.IPv4Interface("{}/{}".format(address, netmask))
+    except ValueError as exc:
+        raise RuntimeError("Invalid USB NCM IPv4 configuration: {}".format(exc))
+
+    ip = interface.ip
+    network = interface.network
+    rfc1918 = (
+        ipaddress.IPv4Network("10.0.0.0/8"),
+        ipaddress.IPv4Network("172.16.0.0/12"),
+        ipaddress.IPv4Network("192.168.0.0/16"),
+    )
+    if not any(ip in private_net for private_net in rfc1918):
+        raise RuntimeError(
+            "USB NCM address {} is not an RFC1918 private IPv4 address".format(ip)
+        )
+    if ip in (network.network_address, network.broadcast_address):
+        raise RuntimeError("USB NCM address {} is not a usable host address".format(ip))
+
+    octets = [int(x) for x in str(ip).split(".")]
+    lease_start = ipaddress.IPv4Address("{}.{}.{}.16".format(*octets[:3]))
+    lease_end = ipaddress.IPv4Address("{}.{}.{}.23".format(*octets[:3]))
+    if lease_start not in network or lease_end not in network:
+        raise RuntimeError(
+            "USB NCM subnet {} must contain DHCP lease range {}-{}".format(
+                network, lease_start, lease_end
+            )
+        )
+
+    source = micropython_dir / "extmod" / "network_usbd_ncm.c"
+    data = source.read_text(encoding="utf-8")
+    sentinel = "SPRINKLERS1 private USB-NCM IPv4 configuration"
+    if sentinel in data:
+        return
+
+    old = """    // Generate unique link-local IP address from MAC address
+    uint8_t ip_bytes[4];
+    generate_linklocal_ip_from_mac(tud_network_mac_address, ip_bytes);
+    // Convert to network byte order and set IP configuration
+    IP(ncm_obj.ipaddr).addr = PP_HTONL(((uint32_t)ip_bytes[0] << 24) | ((uint32_t)ip_bytes[1] << 16) | ((uint32_t)ip_bytes[2] << 8) | ip_bytes[3]);
+    IP(ncm_obj.netmask).addr = PP_HTONL(0xFFFF0000);  // 255.255.0.0 for link-local
+    IP(ncm_obj.gateway).addr = 0;  // No gateway for link-local
+"""
+    if old not in data:
+        raise RuntimeError("Upstream NCM IPv4 initialization anchor not found")
+
+    mask_value = int(interface.netmask)
+    new = """    // SPRINKLERS1 private USB-NCM IPv4 configuration.
+    // Keep the upstream MAC-derived helper referenced so this remains a small
+    // patch against MicroPython master, then override the address explicitly.
+    uint8_t ip_bytes[4];
+    generate_linklocal_ip_from_mac(tud_network_mac_address, ip_bytes);
+    ip_bytes[0] = {a};
+    ip_bytes[1] = {b};
+    ip_bytes[2] = {c};
+    ip_bytes[3] = {d};
+    IP(ncm_obj.ipaddr).addr = PP_HTONL(((uint32_t)ip_bytes[0] << 24) | ((uint32_t)ip_bytes[1] << 16) | ((uint32_t)ip_bytes[2] << 8) | ip_bytes[3]);
+    IP(ncm_obj.netmask).addr = PP_HTONL(0x{mask:08X});
+    IP(ncm_obj.gateway).addr = 0;  // Never advertise USB as an Internet gateway.
+""".format(a=octets[0], b=octets[1], c=octets[2], d=octets[3], mask=mask_value)
+
+    source.write_text(data.replace(old, new, 1), encoding="utf-8")
+    print(
+        "Configured upstream USB NCM private LAN: {}/{} (DHCP host leases {}-{})".format(
+            ip, interface.network.prefixlen, lease_start, lease_end
+        )
+    )
+
 def patch_dhcpserver_guard(micropython_dir):
     source = micropython_dir / "shared" / "netutils" / "dhcpserver.c"
     data = source.read_text(encoding="utf-8")
@@ -702,6 +931,8 @@ def main():
     print("Variant:         ", config["variant"])
     print("MicroPython ref: ", config["micropython_ref"])
     print("ESP-IDF ref:     ", config["esp_idf_ref"])
+    print("USB NCM IPv4:    ", config.get("ncm_ipv4_address", "169.254.x.1 (upstream default)"))
+    print("USB NCM netmask: ", config.get("ncm_ipv4_netmask", "255.255.0.0 (upstream default)"))
 
     idf_dir = ensure_esp_idf(config, work_dir, args.bootstrap)
     micropython_dir = ensure_micropython(config, work_dir)
@@ -729,6 +960,12 @@ def main():
     patch_tinyusb_descriptor_compat(micropython_dir, esp32_dir)
     patch_tinyusb_link_state_compat(esp32_dir)
     patch_esp32_upstream_ncm_port_glue(micropython_dir)
+    if config.get("ncm_ipv4_address"):
+        patch_upstream_ncm_ipv4_config(
+            micropython_dir,
+            config["ncm_ipv4_address"],
+            config.get("ncm_ipv4_netmask", "255.255.255.0"),
+        )
     patch_dhcpserver_guard(micropython_dir)
 
     print("\nBuilding MicroPython master with upstream USB NCM...")

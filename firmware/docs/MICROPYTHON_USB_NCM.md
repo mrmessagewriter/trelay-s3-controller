@@ -27,22 +27,37 @@ signaling, the builder backports the link-state API rather than stubbing it.
 
 ## USB address
 
-Upstream MicroPython derives a deterministic link-local controller address from
-the device MAC:
+Sprinklers1 overrides MicroPython master's default `169.254.x.1/16` link-local
+address and uses a normal RFC1918 private LAN for the USB link:
 
 ```text
-169.254.x.1/16
+ESP32:   172.31.77.1/24
+Windows: DHCP lease, normally 172.31.77.16 through 172.31.77.23
+Gateway: none
 ```
 
-The exact third octet differs by device. Do not hard-code the address.
-Sprinklers1 prints it at startup:
+The values are configured in:
 
 ```text
-USB IPv4: 169.254.x.1
+firmware/micropython/micropython_build.json
 ```
 
-The NCM DHCP server assigns the Windows host an address on the same USB link and
-does not advertise the USB device as a default gateway.
+with:
+
+```json
+"ncm_ipv4_address": "172.31.77.1",
+"ncm_ipv4_netmask": "255.255.255.0"
+```
+
+The builder applies these values to upstream `extmod/network_usbd_ncm.c` at
+build time. The NCM DHCP server assigns the Windows host an address on the same
+USB LAN and does not advertise the USB device as a default gateway.
+
+Sprinklers1 still prints the active address at startup:
+
+```text
+USB IPv4: 172.31.77.1
+```
 
 ## Build
 

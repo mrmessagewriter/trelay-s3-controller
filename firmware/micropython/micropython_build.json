@@ -5,5 +5,7 @@
   "micropython_ref": "master",
   "esp_idf_repository": "https://github.com/espressif/esp-idf.git",
   "esp_idf_ref": "v5.5.2",
-  "output_filename": "LILYGO_T_RELAY_S3_NCM-SPIRAM_OCT.bin"
+  "output_filename": "LILYGO_T_RELAY_S3_NCM-SPIRAM_OCT.bin",
+  "ncm_ipv4_address": "172.31.77.1",
+  "ncm_ipv4_netmask": "255.255.255.0"
 }
