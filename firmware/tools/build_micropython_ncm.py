@@ -805,7 +805,11 @@ static mp_obj_t esp32_ncm_ipconfig(struct netif *netif, size_t n_args, const mp_
 
 
 def patch_upstream_ncm_ipv4_config(micropython_dir, address, netmask):
-    """Replace upstream NCM's 169.254.x.1 link-local address with a private LAN.
+    """Replace upstream NCM's generated 169.254.x.1 address with a private LAN.
+
+    Keep this patch intentionally narrow and semantic. MicroPython master is a
+    moving target, so do not depend on surrounding comments or a whole source
+    block matching byte-for-byte. We only require stable NCM symbols.
 
     The shared MicroPython DHCP server derives lease addresses from the first
     three octets of the NCM interface and assigns host addresses starting at
@@ -846,33 +850,76 @@ def patch_upstream_ncm_ipv4_config(micropython_dir, address, netmask):
     if sentinel in data:
         return
 
-    old = """    // Generate unique link-local IP address from MAC address
-    uint8_t ip_bytes[4];
-    generate_linklocal_ip_from_mac(tud_network_mac_address, ip_bytes);
-    // Convert to network byte order and set IP configuration
-    IP(ncm_obj.ipaddr).addr = PP_HTONL(((uint32_t)ip_bytes[0] << 24) | ((uint32_t)ip_bytes[1] << 16) | ((uint32_t)ip_bytes[2] << 8) | ip_bytes[3]);
-    IP(ncm_obj.netmask).addr = PP_HTONL(0xFFFF0000);  // 255.255.0.0 for link-local
-    IP(ncm_obj.gateway).addr = 0;  // No gateway for link-local
-"""
-    if old not in data:
-        raise RuntimeError("Upstream NCM IPv4 initialization anchor not found")
+    # Insert the fixed private address immediately after upstream computes its
+    # normal link-local address. The existing upstream IP packing expression
+    # then consumes our overridden bytes, so we do not depend on its formatting.
+    generate_re = re.compile(
+        r"(?m)^(?P<indent>[ \t]*)"
+        r"generate_linklocal_ip_from_mac\s*\(\s*"
+        r"tud_network_mac_address\s*,\s*ip_bytes\s*\)\s*;[ \t]*$"
+    )
+    matches = list(generate_re.finditer(data))
+    if len(matches) != 1:
+        raise RuntimeError(
+            "Expected exactly one upstream NCM link-local generator call; found {}".format(
+                len(matches)
+            )
+        )
 
+    match = matches[0]
+    indent = match.group("indent")
+    override = (
+        "\n{0}// SPRINKLERS1 private USB-NCM IPv4 configuration."
+        "\n{0}ip_bytes[0] = {1};"
+        "\n{0}ip_bytes[1] = {2};"
+        "\n{0}ip_bytes[2] = {3};"
+        "\n{0}ip_bytes[3] = {4};"
+    ).format(indent, octets[0], octets[1], octets[2], octets[3])
+    data = data[: match.end()] + override + data[match.end() :]
+
+    # Replace only the netmask value, tolerating comment and whitespace changes.
+    netmask_re = re.compile(
+        r"(?m)^(?P<indent>[ \t]*)IP\(ncm_obj\.netmask\)\.addr\s*=\s*"
+        r"PP_HTONL\(\s*0x[0-9A-Fa-f]+(?:[uUlL]*)\s*\)\s*;[^\n]*$"
+    )
+    mask_matches = list(netmask_re.finditer(data))
+    if len(mask_matches) != 1:
+        raise RuntimeError(
+            "Expected exactly one upstream NCM netmask assignment; found {}".format(
+                len(mask_matches)
+            )
+        )
     mask_value = int(interface.netmask)
-    new = """    // SPRINKLERS1 private USB-NCM IPv4 configuration.
-    // Keep the upstream MAC-derived helper referenced so this remains a small
-    // patch against MicroPython master, then override the address explicitly.
-    uint8_t ip_bytes[4];
-    generate_linklocal_ip_from_mac(tud_network_mac_address, ip_bytes);
-    ip_bytes[0] = {a};
-    ip_bytes[1] = {b};
-    ip_bytes[2] = {c};
-    ip_bytes[3] = {d};
-    IP(ncm_obj.ipaddr).addr = PP_HTONL(((uint32_t)ip_bytes[0] << 24) | ((uint32_t)ip_bytes[1] << 16) | ((uint32_t)ip_bytes[2] << 8) | ip_bytes[3]);
-    IP(ncm_obj.netmask).addr = PP_HTONL(0x{mask:08X});
-    IP(ncm_obj.gateway).addr = 0;  // Never advertise USB as an Internet gateway.
-""".format(a=octets[0], b=octets[1], c=octets[2], d=octets[3], mask=mask_value)
+    data = netmask_re.sub(
+        lambda m: (
+            "{}IP(ncm_obj.netmask).addr = PP_HTONL(0x{:08X});  "
+            "// SPRINKLERS1 {}"
+        ).format(m.group("indent"), mask_value, interface.netmask),
+        data,
+        count=1,
+    )
 
-    source.write_text(data.replace(old, new, 1), encoding="utf-8")
+    # The USB link must never become a default Internet path.
+    gateway_re = re.compile(
+        r"(?m)^(?P<indent>[ \t]*)IP\(ncm_obj\.gateway\)\.addr\s*=\s*[^;\n]+;[^\n]*$"
+    )
+    gateway_matches = list(gateway_re.finditer(data))
+    if len(gateway_matches) != 1:
+        raise RuntimeError(
+            "Expected exactly one upstream NCM gateway assignment; found {}".format(
+                len(gateway_matches)
+            )
+        )
+    data = gateway_re.sub(
+        lambda m: (
+            "{}IP(ncm_obj.gateway).addr = 0;  "
+            "// SPRINKLERS1: USB NCM is never an Internet gateway."
+        ).format(m.group("indent")),
+        data,
+        count=1,
+    )
+
+    source.write_text(data, encoding="utf-8")
     print(
         "Configured upstream USB NCM private LAN: {}/{} (DHCP host leases {}-{})".format(
             ip, interface.network.prefixlen, lease_start, lease_end
