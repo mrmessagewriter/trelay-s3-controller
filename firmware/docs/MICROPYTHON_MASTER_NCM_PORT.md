@@ -20,3 +20,12 @@ In particular, the builder never defines `tud_network_link_state()` as a no-op
 and never replaces `extmod/network_usbd_ncm.c` with a custom ESP-NETIF backend.
 When master/TinyUSB gain native ESP32 support for these seams, the compatibility
 steps are designed to detect existing support and can be removed.
+## ESP32 board CMake ordering
+
+MicroPython loads `mpconfigboard.cmake` from the ESP32 top-level CMake file before
+`esp32_common.cmake` initializes `MICROPY_DIR`. Any board-added source needed at
+that stage must therefore use a path derived from `CMAKE_CURRENT_LIST_DIR` (or
+another already-defined value), not `${MICROPY_DIR}`. The board definition uses
+that rule for `shared/netutils/dhcpserver.c`, and the build helper performs an
+early existence check after installing the board into the MicroPython checkout.
+

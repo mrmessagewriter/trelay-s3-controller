@@ -15,6 +15,15 @@ build after application firmware 1.0.21.
 - USB controller addressing is discovered at runtime; Sprinklers1 does not
   hard-code `192.168.7.1`.
 
+
+## Build-system correction from diagnostics
+
+A GitHub Actions failure diagnostics archive showed CMake trying to compile
+`/shared/netutils/dhcpserver.c`. The board file had used `${MICROPY_DIR}` before
+MicroPython initializes that variable. The board now derives the MicroPython
+repository root from `CMAKE_CURRENT_LIST_DIR`, and the build helper verifies the
+resolved DHCP source before invoking ESP-IDF.
+
 ## Application source
 
 The application source is the current dual-network diagnostic revision with:

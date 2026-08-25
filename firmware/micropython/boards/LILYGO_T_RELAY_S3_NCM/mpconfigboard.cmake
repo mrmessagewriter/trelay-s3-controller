@@ -8,8 +8,14 @@ list(APPEND SDKCONFIG_DEFAULTS
 )
 
 # The ESP32 port does not normally compile MicroPython's shared DHCP server,
-# but upstream network_usbd_ncm.c uses it. The build helper adjusts only the
-# source guard so it can be compiled without enabling MICROPY_PY_LWIP globally.
+# but upstream network_usbd_ncm.c uses it. Board CMake files are loaded before
+# esp32_common.cmake initializes MICROPY_DIR, so derive the repository root from
+# this board directory instead of using ${MICROPY_DIR} here.
+get_filename_component(
+    SPRINKLERS1_MICROPY_DIR
+    "${CMAKE_CURRENT_LIST_DIR}/../../../.."
+    ABSOLUTE
+)
 list(APPEND MICROPY_SOURCE_SHARED
-    ${MICROPY_DIR}/shared/netutils/dhcpserver.c
+    "${SPRINKLERS1_MICROPY_DIR}/shared/netutils/dhcpserver.c"
 )

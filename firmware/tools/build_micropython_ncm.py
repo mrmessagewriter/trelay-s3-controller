@@ -184,7 +184,23 @@ def install_custom_board(custom_dir, micropython_dir, board_name):
     if destination.exists():
         shutil.rmtree(destination)
     shutil.copytree(source, destination)
+
+    # mpconfigboard.cmake is evaluated before esp32_common.cmake initializes
+    # MICROPY_DIR.  The board therefore resolves its extra shared DHCP source
+    # relative to its own installed directory.  Verify that path now so a bad
+    # board-source path fails here instead of later as an opaque CMake error.
+    dhcp_source = (
+        destination / "../../../.." / "shared" / "netutils" / "dhcpserver.c"
+    ).resolve()
+    if not dhcp_source.is_file():
+        raise RuntimeError(
+            "Custom board DHCP source path does not resolve: {}".format(
+                dhcp_source
+            )
+        )
+
     print("Installed custom MicroPython board:", destination)
+    print("Verified upstream DHCP source:", dhcp_source)
 
 
 def idf_shell(idf_dir, cwd, command):
