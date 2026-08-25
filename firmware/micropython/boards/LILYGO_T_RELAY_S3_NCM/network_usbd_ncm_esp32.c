@@ -374,6 +374,7 @@ typedef struct _ncm_obj_t {
     bool enabled;
     bool stack_started;
     bool stack_starting;
+    uint32_t stack_start_error;
 
     uint8_t mac[6];
 
@@ -785,6 +786,8 @@ static esp_err_t ncm_start_stack(
         );
 
     if (err != ESP_OK) {
+        self->stack_start_error =
+            (uint32_t)err;
         self->stack_starting = false;
         return err;
     }
@@ -831,11 +834,14 @@ static esp_err_t ncm_start_stack(
             NULL
         );
 
+        self->stack_start_error =
+            (uint32_t)dhcp_err;
         self->stack_starting = false;
         return dhcp_err;
     }
 
     self->stack_started = true;
+    self->stack_start_error = 0;
     self->stack_starting = false;
 
     return ESP_OK;
@@ -1086,17 +1092,19 @@ static void ncm_init(void) {
     }
 
     /*
-     * ncm_auto_init() normally runs before USB enumeration. On a soft reset,
-     * however, the USB device may already be mounted, so restore the stack
-     * immediately in that case.
+     * Start ESP-NETIF immediately and independently of USB enumeration.
+     *
+     * The IP stack, fixed address, listening sockets, and DHCP server do not
+     * need the Windows host or the CDC console to be open.  USB mounted state
+     * is checked only when an actual Ethernet frame must be transmitted.
+     *
+     * This removes the USB/CDC/NCM callback timing dependency entirely.
      */
-    if (esp_ncm_transport_mounted()) {
-        ncm_raise_esp_error(
-            ncm_start_stack(
-                &ncm_obj
-            )
-        );
-    }
+    ncm_raise_esp_error(
+        ncm_start_stack(
+            &ncm_obj
+        )
+    );
 }
 
 /*
@@ -1110,10 +1118,7 @@ void ncm_auto_init(void) {
 
     ncm_obj.enabled = true;
 
-    if (
-        esp_ncm_transport_mounted()
-        && !ncm_obj.stack_started
-    ) {
+    if (!ncm_obj.stack_started) {
         (void)ncm_start_stack(
             &ncm_obj
         );
@@ -1160,7 +1165,6 @@ static mp_obj_t ncm_status(
     if (
         self->enabled
         && !self->stack_started
-        && esp_ncm_transport_mounted()
     ) {
         (void)ncm_start_stack(
             self
@@ -1192,7 +1196,6 @@ static mp_obj_t ncm_isconnected(
     if (
         self->enabled
         && !self->stack_started
-        && esp_ncm_transport_mounted()
     ) {
         (void)ncm_start_stack(
             self
@@ -1234,10 +1237,7 @@ static mp_obj_t ncm_active(
         enable;
 
     if (enable) {
-        if (
-            esp_ncm_transport_mounted()
-            && !self->stack_started
-        ) {
+        if (!self->stack_started) {
             ncm_raise_esp_error(
                 ncm_start_stack(
                     self
@@ -1579,7 +1579,6 @@ static mp_obj_t ncm_stats(
     if (
         self->enabled
         && !self->stack_started
-        && esp_ncm_transport_mounted()
     ) {
         (void)ncm_start_stack(
             self
@@ -1653,6 +1652,12 @@ static mp_obj_t ncm_stats(
         mp_obj_new_bool(
             self->stack_starting
         )
+    );
+
+    ncm_stats_store_u32(
+        dict,
+        MP_QSTR_stack_start_error,
+        self->stack_start_error
     );
 
     mp_obj_dict_store(
