@@ -1,16 +1,23 @@
-# Generated firmware output
+# Generated firmware/release outputs
 firmware/dist/
 
-# Python cache
+# Python
 __pycache__/
 *.py[cod]
-
-# Virtual environments
 .venv/
 venv/
 
-# Editor/OS files
+# Local build/cache directories
+.cache/
+micropython-lilygo-t-relay-s3-ncm-build/
+
+# Editors / OS
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Logs / temporary files
+*.log
+*.tmp
+*.bak

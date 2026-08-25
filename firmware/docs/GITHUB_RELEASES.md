@@ -37,7 +37,7 @@ device_loader_main.py
 main.zip
 ```
 
-The custom MicroPython runtime is deliberately **not** included.
+The MicroPython board runtime is deliberately **not** included.
 
 Application versioning is controlled by:
 
@@ -66,13 +66,13 @@ micropython-v1.0.1
 Release title example:
 
 ```text
-Sprinklers1 custom MicroPython v1.0.0
+Sprinklers1 MicroPython board runtime v1.0.0
 ```
 
 Release asset example:
 
 ```text
-T_RELAY_S3_NCM-SPIRAM_OCT-v1.0.0.bin
+LILYGO_T_RELAY_S3_NCM-SPIRAM_OCT-v1.0.0.bin
 ```
 
 This is a combined ESP32-S3 MicroPython image containing the bootloader,
@@ -108,7 +108,7 @@ firmware/tools/build_micropython_ncm.py
 Both workflows can also be started manually with `workflow_dispatch`.
 
 Changing the application source does not publish a new MicroPython release.
-Changing the custom MicroPython board/runtime definition does not publish a new
+Changing the MicroPython board/runtime definition does not publish a new
 application firmware release.
 
 ## GitHub permissions

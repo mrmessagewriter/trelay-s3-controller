@@ -1,1 +1,8 @@
+# USB NCM uses MicroPython's upstream lwIP netif inside ESP-IDF's threaded lwIP.
+# Core locking is required by the narrow ESP32 compatibility shim.
 CONFIG_LWIP_TCPIP_CORE_LOCKING=y
+
+# Keep ESP-IDF DHCP server support available for normal ESP32 AP functionality.
+# USB NCM itself uses MicroPython's shared DHCP server.
+CONFIG_LWIP_DHCPS=y
+CONFIG_LWIP_DHCPS_MAX_STATION_NUM=4

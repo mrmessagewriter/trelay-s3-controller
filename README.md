@@ -1,7 +1,7 @@
-# TRelay S3 Controller
+# Sprinklers1
 
-TRelay S3 Controller is a MicroPython-based Wi-Fi sprinkler/relay controller for the
-LILYGO T-RelayS3  (ESP32-S3)
+Sprinklers1 is a MicroPython-based Wi-Fi sprinkler/relay controller for the
+LILYGO T-Relay ESP32-S3.
 
 The project currently provides:
 
@@ -16,16 +16,6 @@ The project currently provides:
 - A Microdot web interface and REST API.
 - Versioned event records with automatic migrations.
 - Uncompressed ZIP-based firmware deployment with an embedded firmware manifest.
-- REST API for direct control of the relays, while this works, it is not very tested.
-- Resizing for the phone, works, but is still a bit of work in progress.
-
-What it doesn't provide:
- - User Authentication
- - Cross Service Authentication
- - OTA firmware updates
- - Paid service or even an Unpaid service, the security for the device to the outside world, will be your decision. 
-
-These are coming in later updates. 
 
 ## Repository layout
 
@@ -48,7 +38,14 @@ firmware/
     build_firmware_deployment.py
     upload_sprinkler_firmware.py
     wipe_device.py
+    build_micropython_ncm.py
+    diagnose_lilygo_usb_ncm.ps1
     next_firmware_version.json
+    next_micropython_version.json
+
+  micropython/
+    micropython_build.json
+    boards/LILYGO_T_RELAY_S3_NCM/
 
   docs/
     ARCHITECTURE.md
@@ -61,14 +58,9 @@ firmware/
 
 ## MicroPython requirement
 
-The T-RelayS3 used by this project has 16 MiB flash and 8 MiB
+The LILYGO T-Relay ESP32-S3 used by this project has 16 MiB flash and 8 MiB
 Octal PSRAM. Use the MicroPython ESP32-S3 **SPIRAM_OCT** build so the PSRAM is
-available to MicroPython.  
-This gives plenty of room 8MB is huge, and MicroPython is quite small.  This memory gives and storage gives plenty of space to play around in. 
-
-This is the official version which is most compatible: https://micropython.org/resources/firmware/ESP32_GENERIC_S3-SPIRAM_OCT-20260406-v1.28.0.bin
-To simplify things you may also use:  https://github.com/mrmessagewriter/trelay-s3-controller/releases/download/micropython-LILYGO_T_RELAY_S3_NCM-v1.0.0/LILYGO_T_RELAY_S3_NCM-SPIRAM_OCT-v1.0.0.bin
-This a custom build of the same official version, but including the ability to handle HTTP over USB, which makes working on this project a bit easier, if things go wrong.  It's mainly for developers but can be used by anyone.
+available to MicroPython.
 
 ## Build
 
@@ -112,28 +104,62 @@ events and the event log.
 
 See `firmware/docs/EVENTS_AND_PERSISTENCE.md`.
 
-## HTML UI:
+## GitHub firmware releases
 
-### Manual Control:
-On the main control panel, you can just turn on and off the different relays as you wish:
-<img width="654" height="270" alt="image" src="https://github.com/user-attachments/assets/21d336d7-327f-4b98-abf4-bc7f3cd20298" />
+GitHub Actions can build and publish versioned firmware releases automatically.
 
-### Events: 
-Quick view of the next 3 upcoming events:
-<img width="674" height="314" alt="image" src="https://github.com/user-attachments/assets/7e3b1438-cde1-4ac6-b006-e69b9ebdbb18" />
+A release asset is named like:
 
-Add and remove events for turning the Relays on and Off, while this project is mainly focused toward Sprinklers being turned on and off, this can be used for any purpose you need to schedule turning on and off a Relay.  
-<img width="738" height="641" alt="image" src="https://github.com/user-attachments/assets/650a2fbc-8892-4b04-910a-8ed6cfcc2fde" />
+```text
+Sprinklers1-v1.2.3.zip
+```
 
-See which events were successful, skipped, or failed all together.  
-<img width="661" height="327" alt="image" src="https://github.com/user-attachments/assets/863a60ab-fbf9-4b15-9503-dce2a4ceb956" />
+and contains:
 
-### Weather:
-View the weather on the main control panel
-<img width="655" height="189" alt="image" src="https://github.com/user-attachments/assets/1fb7c6ff-10bf-48e2-89b8-7bf638366f7d" />
+```text
+device_loader_main.py
+main.zip
+```
 
-Adjust setting to get weather in your area, you can choose to use zipcode, or if outside the US, just the Latitude and Longitude.  
-<img width="475" height="532" alt="image" src="https://github.com/user-attachments/assets/403ae446-aeb8-423f-ac52-45149eebea00" />
+The release workflow uses the same `firmware/tools/build_firmware_deployment.py`
+builder used for local builds and never attempts to upload firmware to a
+physical device.
 
-When adding an event, your event will be filtered by the weather values, if you wish.  
-<img width="718" height="652" alt="image" src="https://github.com/user-attachments/assets/4b2039f1-0082-440b-b8b9-3ce762852126" />
+See `firmware/docs/GITHUB_RELEASES.md`.
+
+## MicroPython master + upstream USB NCM
+
+The controller runtime is built directly from the current MicroPython `master`
+branch. The build keeps MicroPython's upstream `extmod/network_usbd_ncm.c`
+implementation; it does **not** replace it with the older Sprinklers1
+ESP-NETIF NCM backend.
+
+The T-Relay-S3 board configuration enables:
+
+- ESP32-S3 / 16 MiB flash.
+- 8 MiB Octal PSRAM (`SPIRAM_OCT`).
+- USB CDC console.
+- `network.USBD_NCM` and its upstream DHCP server.
+- Non-blocking CDC console output during unattended boot.
+
+Build locally with:
+
+```cmd
+python firmware\tools\build_micropython_ncm.py --bootstrap --clean
+```
+
+The build helper follows `master`, applies only the narrow ESP32/lwIP and
+TinyUSB compatibility glue needed by the ESP32 port, and leaves upstream NCM
+link state, DHCP, lifecycle, and link-local addressing in control.
+
+The output is:
+
+```text
+firmware/dist/micropython/LILYGO_T_RELAY_S3_NCM-SPIRAM_OCT.bin
+```
+
+MicroPython master derives the controller's USB IPv4 address in the
+`169.254.x.1/16` link-local range. Sprinklers1 queries and prints that address
+at boot instead of assuming `192.168.7.1`.
+
+See `firmware/docs/MICROPYTHON_USB_NCM.md`.

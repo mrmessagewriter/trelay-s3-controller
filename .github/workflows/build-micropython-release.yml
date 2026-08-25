@@ -124,7 +124,7 @@ jobs:
 
       # Do not stop the job immediately when the build fails.  We need the
       # following diagnostic steps to print ESP-IDF/Ninja's real error.
-      - name: Build custom MicroPython runtime
+      - name: Build master-based MicroPython runtime
         id: micropython_build
         continue-on-error: true
         shell: bash
@@ -244,7 +244,7 @@ jobs:
 
           test -s "firmware/dist/micropython/release/$ASSET_NAME"
 
-      - name: Publish custom MicroPython GitHub Release
+      - name: Publish MicroPython board-runtime GitHub Release
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -260,7 +260,7 @@ jobs:
             --title "MicroPython LILYGO_T_RELAY_S3_NCM v$VERSION" \
             --notes "MicroPython build for LILYGO T-Relay ESP32-S3 with Octal PSRAM and USB CDC-NCM networking."
 
-      - name: Advance custom MicroPython version safely
+      - name: Advance MicroPython board-runtime version safely
         shell: bash
         env:
           BRANCH_NAME: ${{ github.ref_name }}

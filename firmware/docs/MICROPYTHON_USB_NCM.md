@@ -1,76 +1,99 @@
-# MicroPython LILYGO_T_RELAY_S3_NCM
+# MicroPython Master USB-NCM Runtime
 
-This repository contains a custom MicroPython board build for the
-LILYGO T-Relay ESP32-S3.
+Sprinklers1 builds its LILYGO T-Relay ESP32-S3 runtime from the current
+MicroPython `master` branch.
 
-## Build identity
+## Design rule
+
+The build uses MicroPython's upstream `extmod/network_usbd_ncm.c` as the NCM
+implementation. It no longer copies the old Sprinklers1
+`network_usbd_ncm_esp32.c` over the upstream source.
+
+The ESP32 port does not currently expose all of the generic `MICROPY_PY_LWIP`
+helpers expected by upstream NCM, so `build_micropython_ncm.py` applies a narrow
+build-time compatibility shim. The shim:
+
+- Uses ESP-IDF lwIP core locking.
+- Routes NCM receive frames through `tcpip_input()`.
+- Gets the ESP32 Ethernet MAC with `esp_read_mac()`.
+- Supplies query-only `ifconfig()` / `ipconfig()` helpers.
+- Compiles MicroPython's shared DHCP server for NCM.
+- Preserves upstream NCM `ncm_auto_init()`, `active()`, `isconnected()`, link
+  state signaling, DHCP behavior, and link-local address generation.
+
+The build helper also detects the TinyUSB NCM API available in the ESP32
+managed component. If MicroPython's pinned TinyUSB predates dynamic NCM carrier
+signaling, the builder backports the link-state API rather than stubbing it.
+
+## USB address
+
+Upstream MicroPython derives a deterministic link-local controller address from
+the device MAC:
 
 ```text
-Board:   LILYGO_T_RELAY_S3_NCM
-Variant: SPIRAM_OCT
+169.254.x.1/16
 ```
 
-The application name `Sprinklers1` is not used for the MicroPython runtime.
+The exact third octet differs by device. Do not hard-code the address.
+Sprinklers1 prints it at startup:
 
-## Features
-
-The custom board keeps the ESP32-S3 Octal-PSRAM configuration and enables:
-
-```c
-#define MICROPY_PY_NETWORK_USBD_NCM (1)
+```text
+USB IPv4: 169.254.x.1
 ```
 
-which exposes:
+The NCM DHCP server assigns the Windows host an address on the same USB link and
+does not advertise the USB device as a default gateway.
 
-```python
-network.USBD_NCM
+## Build
+
+From the repository root:
+
+```cmd
+python firmware\tools\build_micropython_ncm.py --bootstrap --clean
 ```
 
-## Local output
+On Windows the script relaunches itself inside WSL. Subsequent builds can omit
+`--bootstrap` when ESP-IDF and its toolchain are already present.
+
+Output:
 
 ```text
 firmware/dist/micropython/LILYGO_T_RELAY_S3_NCM-SPIRAM_OCT.bin
 ```
 
-## GitHub Action
+The exact MicroPython commit used is printed by the build script so a preview
+build can be reproduced/debugged.
 
-The runtime has its own workflow:
+## First NCM test after flashing
 
-```text
-.github/workflows/build-micropython-release.yml
+Before installing Sprinklers1, verify the runtime at the REPL:
+
+```python
+import network
+ncm = network.USBD_NCM()
+print("active:", ncm.active())
+print("connected:", ncm.isconnected())
+print("status:", ncm.status())
+print("ifconfig:", ncm.ifconfig())
 ```
 
-and its own release/version stream.
+`active()` should already be `True` from boot. Do not call `active(True)` merely
+to initialize NCM; upstream master auto-initializes it before USB enumeration.
 
-The GitHub build workspace is:
+On Windows, `Get-NetAdapter` should show the MicroPython USB network adapter as
+`Up` with a non-zero link speed once the host has configured NCM.
 
-```text
-$HOME/micropython-lilygo-t-relay-s3-ncm-build
-```
+## Version stream
 
-It is intentionally not named after the Sprinklers1 application.
-
-## ESP-IDF
-
-The current build configuration uses:
+The custom board runtime has a release version independent from the Sprinklers1
+application. The next release number is stored in:
 
 ```text
-ESP-IDF v5.5.2
+firmware/tools/next_micropython_version.json
 ```
 
-to match the current MicroPython `master` ESP32-S3 dependency lockfile.
-
-## DHCP source
-
-`network.USBD_NCM` requires MicroPython's small DHCP server implementation.
-The custom board adds:
+GitHub release assets are named like:
 
 ```text
-shared/netutils/dhcpserver.c
+LILYGO_T_RELAY_S3_NCM-SPIRAM_OCT-v1.0.0.bin
 ```
-
-to the ESP32 build.
-
-The board CMake derives the MicroPython repository root from
-`CMAKE_CURRENT_LIST_DIR` because `MICROPY_DIR` is not yet defined when
-`mpconfigboard.cmake` is first processed.
