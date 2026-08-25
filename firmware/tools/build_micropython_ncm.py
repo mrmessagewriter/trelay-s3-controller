@@ -1134,33 +1134,16 @@ def install_esp32_native_ncm_backend(custom_dir, micropython_dir):
         / "network_usbd_ncm_esp32.c"
     )
 
-    transport_source = (
-        board_dir
-        / "esp_ncm_transport.c"
-    )
-
-    transport_header = (
-        board_dir
-        / "esp_ncm_transport.h"
-    )
-
     destination = (
         micropython_dir
         / "extmod"
         / "network_usbd_ncm.c"
     )
 
-    for required in (
-        source,
-        transport_source,
-        transport_header,
-    ):
-        if not required.is_file():
-            raise FileNotFoundError(
-                "Missing ESP32 native NCM file: {}".format(
-                    required
-                )
-            )
+    if not source.is_file():
+        raise FileNotFoundError(
+            "Missing ESP32 native NCM backend: {}".format(source)
+        )
 
     if not destination.is_file():
         raise FileNotFoundError(
@@ -1177,7 +1160,7 @@ def install_esp32_native_ncm_backend(custom_dir, micropython_dir):
     print()
     print("Installed ESP32-native USB-NCM backend:")
     print("  MicroPython owns TinyUSB composite CDC + NCM USB device")
-    print("  Espressif-style deferred NCM RX/TX transport")
+    print("  Espressif-style deferred NCM RX/TX transport (single C unit)")
     print("  ESP-IDF esp_netif Ethernet stack")
     print("  ESP-IDF DHCP server")
     print("  USB device address: 192.168.7.1/24")
