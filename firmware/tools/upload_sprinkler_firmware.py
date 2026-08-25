@@ -16,9 +16,11 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import subprocess
 import sys
+import tempfile
 import time
 import zipfile
 from pathlib import Path
@@ -81,8 +83,9 @@ def parse_args():
         "--firmware",
         default=None,
         help=(
-            "Firmware ZIP path. Defaults "
-            "to firmware/dist/main.zip."
+            "Firmware ZIP path. May be either the inner main.zip or a "
+            "downloaded LilyGo T-Relay-S3 Controller Firmware release ZIP "
+            "containing main.zip. Defaults to firmware/dist/main.zip."
         ),
     )
 
@@ -343,9 +346,67 @@ def verify_mpremote_repl(
     )
 
 
-def inspect_firmware(
-    firmware_path
+def _verify_stored_entries(
+    archive,
+    description,
 ):
+    infos = archive.infolist()
+
+    if not infos:
+        raise ValueError(
+            "{} is empty.".format(
+                description
+            )
+        )
+
+    for info in infos:
+        if (
+            info.compress_type
+            != zipfile.ZIP_STORED
+        ):
+            raise ValueError(
+                "{} must be uncompressed. "
+                "Compressed entry: {}".format(
+                    description,
+                    info.filename,
+                )
+            )
+
+
+def _read_firmware_metadata_from_archive(
+    archive,
+):
+    if (
+        FIRMWARE_INFO
+        not in archive.namelist()
+    ):
+        raise ValueError(
+            "firmware_info.json is "
+            "missing from firmware ZIP."
+        )
+
+    return json.loads(
+        archive.read(
+            FIRMWARE_INFO
+        ).decode(
+            "utf-8"
+        )
+    )
+
+
+def prepare_firmware_package(
+    firmware_path,
+    extraction_dir,
+):
+    """Accept either main.zip or a downloaded release package.
+
+    Returns:
+        metadata,
+        upload_path,
+        embedded_loader_path,
+        input_kind
+    """
+
     if not firmware_path.is_file():
         raise FileNotFoundError(
             "Firmware ZIP not found: {}\n"
@@ -357,46 +418,110 @@ def inspect_firmware(
     with zipfile.ZipFile(
         firmware_path,
         "r",
-    ) as archive:
+    ) as outer:
 
-        infos = (
-            archive.infolist()
+        _verify_stored_entries(
+            outer,
+            "Firmware ZIP",
         )
 
-        if not infos:
-            raise ValueError(
-                "Firmware ZIP is empty."
-            )
+        names = set(
+            outer.namelist()
+        )
 
-        for info in infos:
-            if (
-                info.compress_type
-                != zipfile.ZIP_STORED
-            ):
-                raise ValueError(
-                    "Firmware ZIP must be "
-                    "uncompressed. Compressed "
-                    "entry: {}".format(
-                        info.filename
-                    )
+        # ----------------------------------------------------
+        # Direct device firmware image:
+        #
+        #   main.zip
+        #     firmware_info.json
+        #     main.py
+        #     ...
+        # ----------------------------------------------------
+        if FIRMWARE_INFO in names:
+            metadata = (
+                _read_firmware_metadata_from_archive(
+                    outer
                 )
+            )
 
-        if (
-            FIRMWARE_INFO
-            not in archive.namelist()
-        ):
+            return (
+                metadata,
+                firmware_path,
+                None,
+                "device firmware ZIP",
+            )
+
+        # ----------------------------------------------------
+        # GitHub release package:
+        #
+        #   LilyGo-T-Relay-S3-Controller-Firmware-vX.Y.Z.zip
+        #     device_loader_main.py
+        #     main.zip
+        # ----------------------------------------------------
+        if "main.zip" not in names:
             raise ValueError(
-                "firmware_info.json is "
-                "missing from firmware ZIP."
+                "ZIP is neither a device firmware image nor a "
+                "LilyGo T-Relay-S3 Controller Firmware release package. "
+                "Expected firmware_info.json or main.zip at the ZIP root."
             )
 
-        return json.loads(
-            archive.read(
-                FIRMWARE_INFO
-            ).decode(
-                "utf-8"
-            )
+        main_zip_bytes = outer.read(
+            "main.zip"
         )
+
+        with zipfile.ZipFile(
+            io.BytesIO(
+                main_zip_bytes
+            ),
+            "r",
+        ) as inner:
+
+            _verify_stored_entries(
+                inner,
+                "Embedded main.zip",
+            )
+
+            metadata = (
+                _read_firmware_metadata_from_archive(
+                    inner
+                )
+            )
+
+        extraction_dir.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        extracted_firmware = (
+            extraction_dir /
+            "main.zip"
+        )
+
+        extracted_firmware.write_bytes(
+            main_zip_bytes
+        )
+
+        embedded_loader = None
+
+        if "device_loader_main.py" in names:
+            embedded_loader = (
+                extraction_dir /
+                "device_loader_main.py"
+            )
+
+            embedded_loader.write_bytes(
+                outer.read(
+                    "device_loader_main.py"
+                )
+            )
+
+        return (
+            metadata,
+            extracted_firmware,
+            embedded_loader,
+            "release package",
+        )
+
 
 
 def sha256_file(
@@ -662,13 +787,13 @@ def main():
         "build_firmware_deployment.py"
     )
 
-    loader_path = (
+    repository_loader_path = (
         firmware_dir /
         "source" /
         "device_loader_main.py"
     )
 
-    firmware_path = (
+    firmware_input_path = (
         Path(
             args.firmware
         ).resolve()
@@ -695,112 +820,165 @@ def main():
                 builder_path
             )
 
-        metadata = inspect_firmware(
-            firmware_path
-        )
+            # A local build always produces the direct inner image.
+            firmware_input_path = (
+                firmware_dir /
+                "dist" /
+                "main.zip"
+            ).resolve()
 
-        print()
-        print(
-            "Firmware image"
-        )
-        print(
-            "  Name:       ",
-            metadata.get(
-                "name",
-                "unknown"
-            )
-        )
-        print(
-            "  Version:    ",
-            metadata.get(
-                "version",
-                "unknown"
-            )
-        )
-        print(
-            "  Build date: ",
-            metadata.get(
-                "date",
-                "unknown"
-            )
-        )
-        print(
-            "  File:       ",
-            firmware_path
-        )
+        with tempfile.TemporaryDirectory(
+            prefix="lilygo-t-relay-firmware-"
+        ) as temp_name:
 
-        if args.build_only:
+            temp_dir = Path(
+                temp_name
+            )
+
+            (
+                metadata,
+                upload_path,
+                embedded_loader_path,
+                input_kind,
+            ) = prepare_firmware_package(
+                firmware_input_path,
+                temp_dir,
+            )
+
             print()
             print(
-                "Build complete; "
-                "device was not modified."
+                "Firmware image"
             )
-            return 0
-
-        ensure_mpremote()
-
-        print()
-        print(
-            "Target device:",
-            args.port
-        )
-
-        recover_repl(
-            args.port
-        )
-
-        verify_mpremote_repl(
-            args.port
-        )
-
-        if args.install_loader:
-            install_loader(
-                args.port,
-                loader_path
-            )
-
-        upload_firmware(
-            args.port,
-            firmware_path
-        )
-
-        if not args.no_reset:
-            print()
             print(
-                "Resetting device..."
-            )
-
-            run(
-                mpremote(
-                    args.port,
-                    "reset",
+                "  Name:       ",
+                metadata.get(
+                    "name",
+                    "unknown"
                 )
             )
-
-        print()
-        print(
-            "Firmware deployment "
-            "successful."
-        )
-        print(
-            "  Version:",
-            metadata.get(
-                "version",
-                "unknown"
+            print(
+                "  Version:    ",
+                metadata.get(
+                    "version",
+                    "unknown"
+                )
             )
-        )
-        print(
-            "  Device:",
-            args.port
-        )
-        print(
-            "  /config.json preserved"
-        )
-        print(
-            "  /events.json preserved"
-        )
+            print(
+                "  Build date: ",
+                metadata.get(
+                    "date",
+                    "unknown"
+                )
+            )
+            print(
+                "  Input:      ",
+                firmware_input_path
+            )
+            print(
+                "  Input type: ",
+                input_kind
+            )
 
-        return 0
+            if (
+                upload_path
+                != firmware_input_path
+            ):
+                print(
+                    "  Device ZIP: ",
+                    upload_path
+                )
+
+            if args.build_only:
+                print()
+                print(
+                    "Build complete; "
+                    "device was not modified."
+                )
+                return 0
+
+            ensure_mpremote()
+
+            print()
+            print(
+                "Target device:",
+                args.port
+            )
+
+            recover_repl(
+                args.port
+            )
+
+            verify_mpremote_repl(
+                args.port
+            )
+
+            if args.install_loader:
+                loader_path = (
+                    embedded_loader_path
+                    if embedded_loader_path
+                    is not None
+                    else repository_loader_path
+                )
+
+                if (
+                    embedded_loader_path
+                    is not None
+                ):
+                    print()
+                    print(
+                        "Using loader embedded "
+                        "in release package."
+                    )
+
+                install_loader(
+                    args.port,
+                    loader_path
+                )
+
+            # Always upload the actual inner main.zip.
+            # Never upload the outer GitHub release package to /main.zip.
+            upload_firmware(
+                args.port,
+                upload_path
+            )
+
+            if not args.no_reset:
+                print()
+                print(
+                    "Resetting device..."
+                )
+
+                run(
+                    mpremote(
+                        args.port,
+                        "reset",
+                    )
+                )
+
+            print()
+            print(
+                "Firmware deployment "
+                "successful."
+            )
+            print(
+                "  Version:",
+                metadata.get(
+                    "version",
+                    "unknown"
+                )
+            )
+            print(
+                "  Device:",
+                args.port
+            )
+            print(
+                "  /config.json preserved"
+            )
+            print(
+                "  /events.json preserved"
+            )
+
+            return 0
 
     except subprocess.CalledProcessError as exc:
         print(
