@@ -1123,11 +1123,25 @@ def patch_esp32_ncm_tx_readiness(micropython_dir):
 def install_esp32_native_ncm_backend(custom_dir, micropython_dir):
     """Replace the generic USB-NCM source with the ESP32 esp_netif backend."""
 
-    source = (
+    board_dir = (
         custom_dir
         / "boards"
         / "LILYGO_T_RELAY_S3_NCM"
+    )
+
+    source = (
+        board_dir
         / "network_usbd_ncm_esp32.c"
+    )
+
+    transport_source = (
+        board_dir
+        / "esp_ncm_transport.c"
+    )
+
+    transport_header = (
+        board_dir
+        / "esp_ncm_transport.h"
     )
 
     destination = (
@@ -1136,10 +1150,17 @@ def install_esp32_native_ncm_backend(custom_dir, micropython_dir):
         / "network_usbd_ncm.c"
     )
 
-    if not source.is_file():
-        raise FileNotFoundError(
-            "Missing ESP32 native NCM backend: {}".format(source)
-        )
+    for required in (
+        source,
+        transport_source,
+        transport_header,
+    ):
+        if not required.is_file():
+            raise FileNotFoundError(
+                "Missing ESP32 native NCM file: {}".format(
+                    required
+                )
+            )
 
     if not destination.is_file():
         raise FileNotFoundError(
@@ -1148,15 +1169,20 @@ def install_esp32_native_ncm_backend(custom_dir, micropython_dir):
             )
         )
 
-    shutil.copy2(source, destination)
+    shutil.copy2(
+        source,
+        destination
+    )
 
     print()
     print("Installed ESP32-native USB-NCM backend:")
-    print("  TinyUSB NCM framing/descriptors")
+    print("  MicroPython owns TinyUSB composite CDC + NCM USB device")
+    print("  Espressif-style deferred NCM RX/TX transport")
     print("  ESP-IDF esp_netif Ethernet stack")
     print("  ESP-IDF DHCP server")
     print("  USB device address: 192.168.7.1/24")
     print("  no USB default gateway")
+    print("  network.USBD_NCM().stats() enabled")
 
 
 def find_firmware_bin(esp32_dir, board_name, variant):
