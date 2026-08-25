@@ -63,19 +63,53 @@ jobs:
           import os
           from pathlib import Path
 
+          import subprocess
+
           path = Path("firmware/tools/next_micropython_version.json")
           data = json.loads(path.read_text(encoding="utf-8"))
-          version = str(data["next_version"]).strip()
+          configured_version = str(data["next_version"]).strip()
 
-          parts = version.split(".")
+          parts = configured_version.split(".")
           if len(parts) != 3 or not all(part.isdigit() for part in parts):
               raise SystemExit(
                   "next_micropython_version.json must contain MAJOR.MINOR.PATCH"
               )
 
+          major, minor, patch = (int(part) for part in parts)
+
+          # Recover automatically if a previous release was published but the
+          # final next-version commit lost a race with another push to main.
+          while True:
+              version = f"{major}.{minor}.{patch}"
+              tag = "micropython-LILYGO_T_RELAY_S3_NCM-v" + version
+
+              result = subprocess.run(
+                  [
+                      "git",
+                      "ls-remote",
+                      "--exit-code",
+                      "--tags",
+                      "origin",
+                      "refs/tags/" + tag,
+                  ],
+                  stdout=subprocess.DEVNULL,
+                  stderr=subprocess.DEVNULL,
+                  check=False,
+              )
+
+              if result.returncode != 0:
+                  break
+
+              print(
+                  "Release tag already exists:",
+                  tag,
+                  "- trying next patch version.",
+              )
+              patch += 1
+
           values = {
               "version": version,
-              "tag": "micropython-LILYGO_T_RELAY_S3_NCM-v" + version,
+              "tag": tag,
               "asset_name": "LILYGO_T_RELAY_S3_NCM-SPIRAM_OCT-v" + version + ".bin",
           }
 
@@ -226,48 +260,115 @@ jobs:
             --title "MicroPython LILYGO_T_RELAY_S3_NCM v$VERSION" \
             --notes "MicroPython build for LILYGO T-Relay ESP32-S3 with Octal PSRAM and USB CDC-NCM networking."
 
-      - name: Increment custom MicroPython release version
-        shell: bash
-        env:
-          VERSION: ${{ steps.runtime.outputs.version }}
-        run: |
-          python - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-
-          path = Path("firmware/tools/next_micropython_version.json")
-          version = os.environ["VERSION"]
-
-          major, minor, patch = (int(part) for part in version.split("."))
-          next_version = f"{major}.{minor}.{patch + 1}"
-
-          path.write_text(
-              json.dumps(
-                  {"next_version": next_version},
-                  indent=2,
-              ) + "\n",
-              encoding="utf-8",
-          )
-
-          print("Next custom MicroPython release:", next_version)
-          PY
-
-      - name: Commit next custom MicroPython version
+      - name: Advance custom MicroPython version safely
         shell: bash
         env:
           BRANCH_NAME: ${{ github.ref_name }}
           VERSION: ${{ steps.runtime.outputs.version }}
         run: |
+          set -euo pipefail
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add firmware/tools/next_micropython_version.json
+          # A long firmware build can finish after another commit has already
+          # advanced main. Rebase/reset onto the latest remote state, reapply
+          # only the version bump, and retry if another push wins the race.
+          for attempt in 1 2 3 4 5; do
+            echo
+            echo "Version bump push attempt $attempt of 5"
 
-          if git diff --cached --quiet; then
-            echo "MicroPython version file did not change; nothing to commit."
-            exit 0
-          fi
+            git fetch origin "$BRANCH_NAME"
+            git reset --hard "origin/$BRANCH_NAME"
 
-          git commit -m "Bump LILYGO_T_RELAY_S3_NCM MicroPython build version after v$VERSION release"
-          git push origin "HEAD:$BRANCH_NAME"
+            python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path("firmware/tools/next_micropython_version.json")
+          released_version = os.environ["VERSION"]
+
+          major, minor, patch = (
+              int(part)
+              for part in released_version.split(".")
+          )
+          required_next = (major, minor, patch + 1)
+
+          data = json.loads(path.read_text(encoding="utf-8"))
+          configured = str(data["next_version"]).strip()
+
+          configured_parts = configured.split(".")
+          if (
+              len(configured_parts) != 3
+              or not all(part.isdigit() for part in configured_parts)
+          ):
+              raise SystemExit(
+                  "next_micropython_version.json must contain "
+                  "MAJOR.MINOR.PATCH"
+              )
+
+          current_next = tuple(
+              int(part)
+              for part in configured_parts
+          )
+
+          # Never move the version backwards if another workflow/user has
+          # already advanced it further.
+          target = max(
+              current_next,
+              required_next,
+          )
+
+          target_text = ".".join(
+              str(part)
+              for part in target
+          )
+
+          if target_text == configured:
+              print(
+                  "Remote next MicroPython version is already",
+                  target_text,
+              )
+          else:
+              path.write_text(
+                  json.dumps(
+                      {"next_version": target_text},
+                      indent=2,
+                  ) + "\n",
+                  encoding="utf-8",
+              )
+
+              print(
+                  "Advancing next MicroPython version:",
+                  configured,
+                  "->",
+                  target_text,
+              )
+          PY
+
+            git add firmware/tools/next_micropython_version.json
+
+            if git diff --cached --quiet; then
+              echo "Remote version file is already sufficiently advanced."
+              exit 0
+            fi
+
+            git commit \
+              -m "Bump LILYGO_T_RELAY_S3_NCM MicroPython build version after v$VERSION release"
+
+            if git push origin "HEAD:$BRANCH_NAME"; then
+              echo "Version bump pushed successfully."
+              exit 0
+            fi
+
+            echo "main advanced during push attempt $attempt; retrying against latest remote state."
+
+            # The next loop resets onto origin/main, so discard this local
+            # retry commit and recreate the minimal version change.
+            sleep $((attempt * 2))
+          done
+
+          echo "Unable to push the MicroPython version bump after 5 attempts."
+          exit 1
+
