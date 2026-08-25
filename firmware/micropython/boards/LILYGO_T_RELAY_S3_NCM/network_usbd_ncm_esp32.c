@@ -373,6 +373,7 @@ typedef struct _ncm_obj_t {
     bool init;
     bool enabled;
     bool stack_started;
+    bool stack_starting;
 
     uint8_t mac[6];
 
@@ -625,6 +626,10 @@ static void ncm_record_frame(
     }
 }
 
+static esp_err_t ncm_start_stack(
+    ncm_obj_t *self
+);
+
 /*
  * USB -> ESP-IDF network stack.
  *
@@ -645,6 +650,29 @@ static esp_err_t ncm_transport_rx(
         || !self->enabled
     ) {
         return ESP_ERR_INVALID_STATE;
+    }
+
+    /*
+     * USB enumeration can finish before the MicroPython NCM backend registers
+     * tud_network_init_cb().  In that case the one-shot TinyUSB init callback
+     * has already been missed.  Receiving a frame proves the NCM interface is
+     * mounted and active, so recover the esp_netif lifecycle here before
+     * handing the frame to lwIP.
+     */
+    if (
+        !self->stack_started
+        && !self->stack_starting
+        && esp_ncm_transport_mounted()
+    ) {
+        esp_err_t start_err =
+            ncm_start_stack(
+                self
+            );
+
+        if (start_err != ESP_OK) {
+            self->rx_errors += 1;
+            return start_err;
+        }
     }
 
     self->rx_frames += 1;
@@ -728,7 +756,7 @@ static esp_err_t ncm_driver_transmit(
     return err;
 }
 
-static void ncm_start_stack(
+static esp_err_t ncm_start_stack(
     ncm_obj_t *self
 ) {
     if (
@@ -736,21 +764,34 @@ static void ncm_start_stack(
         || !self->init
         || !self->enabled
         || self->netif == NULL
-        || self->stack_started
     ) {
-        return;
+        return ESP_ERR_INVALID_STATE;
     }
 
-    ncm_raise_esp_error(
+    if (self->stack_started) {
+        return ESP_OK;
+    }
+
+    if (self->stack_starting) {
+        return ESP_OK;
+    }
+
+    self->stack_starting = true;
+
+    esp_err_t err =
         esp_netif_set_ip_info(
             self->netif,
             &ncm_ip_info
-        )
-    );
+        );
+
+    if (err != ESP_OK) {
+        self->stack_starting = false;
+        return err;
+    }
 
     /*
-     * Match the ordering in Espressif's custom-USB esp_netif examples:
-     * start the interface first, then mark the Ethernet link connected.
+     * Bring the custom Ethernet-style esp_netif up before giving it the first
+     * frame.  These action helpers are void in ESP-IDF 5.5.x.
      */
     esp_netif_action_start(
         self->netif,
@@ -776,12 +817,28 @@ static void ncm_start_stack(
         && dhcp_err
             != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STARTED
     ) {
-        ncm_raise_esp_error(
-            dhcp_err
+        esp_netif_action_disconnected(
+            self->netif,
+            NULL,
+            0,
+            NULL
         );
+
+        esp_netif_action_stop(
+            self->netif,
+            NULL,
+            0,
+            NULL
+        );
+
+        self->stack_starting = false;
+        return dhcp_err;
     }
 
     self->stack_started = true;
+    self->stack_starting = false;
+
+    return ESP_OK;
 }
 
 static void ncm_stop_stack(
@@ -826,6 +883,7 @@ static void ncm_stop_stack(
     );
 
     self->stack_started = false;
+    self->stack_starting = false;
 }
 
 /*
@@ -840,7 +898,11 @@ static void ncm_transport_initialized(
     ncm_obj_t *self =
         (ncm_obj_t *)ctx;
 
-    ncm_start_stack(
+    /*
+     * Never raise a MicroPython exception from TinyUSB callback context.
+     * If this attempt fails, the first RX frame will retry.
+     */
+    (void)ncm_start_stack(
         self
     );
 }
@@ -974,6 +1036,18 @@ static void ncm_init(void) {
     );
 
     /*
+     * Mark the object usable BEFORE registering the TinyUSB callback.
+     *
+     * Previously these flags were set after esp_ncm_transport_init().  If the
+     * host had already enumerated NCM, or the callback fired immediately,
+     * ncm_start_stack() saw init/enabled == false and silently returned.  That
+     * left mounted=True but stack_started=False until another USB timing event
+     * happened (for example opening the CDC console).
+     */
+    ncm_obj.init = true;
+    ncm_obj.enabled = true;
+
+    /*
      * Install only the NCM class transport. MicroPython has already installed
      * and owns TinyUSB itself, including the CDC console and descriptors.
      */
@@ -1011,17 +1085,16 @@ static void ncm_init(void) {
         );
     }
 
-    ncm_obj.init = true;
-    ncm_obj.enabled = true;
-
     /*
      * ncm_auto_init() normally runs before USB enumeration. On a soft reset,
      * however, the USB device may already be mounted, so restore the stack
      * immediately in that case.
      */
     if (esp_ncm_transport_mounted()) {
-        ncm_start_stack(
-            &ncm_obj
+        ncm_raise_esp_error(
+            ncm_start_stack(
+                &ncm_obj
+            )
         );
     }
 }
@@ -1041,7 +1114,7 @@ void ncm_auto_init(void) {
         esp_ncm_transport_mounted()
         && !ncm_obj.stack_started
     ) {
-        ncm_start_stack(
+        (void)ncm_start_stack(
             &ncm_obj
         );
     }
@@ -1084,6 +1157,16 @@ static mp_obj_t ncm_status(
             self_in
         );
 
+    if (
+        self->enabled
+        && !self->stack_started
+        && esp_ncm_transport_mounted()
+    ) {
+        (void)ncm_start_stack(
+            self
+        );
+    }
+
     return MP_OBJ_NEW_SMALL_INT(
         self->enabled
         && self->stack_started
@@ -1105,6 +1188,16 @@ static mp_obj_t ncm_isconnected(
         MP_OBJ_TO_PTR(
             self_in
         );
+
+    if (
+        self->enabled
+        && !self->stack_started
+        && esp_ncm_transport_mounted()
+    ) {
+        (void)ncm_start_stack(
+            self
+        );
+    }
 
     return mp_obj_new_bool(
         self->enabled
@@ -1145,8 +1238,10 @@ static mp_obj_t ncm_active(
             esp_ncm_transport_mounted()
             && !self->stack_started
         ) {
-            ncm_start_stack(
-                self
+            ncm_raise_esp_error(
+                ncm_start_stack(
+                    self
+                )
             );
         }
     } else {
@@ -1296,8 +1391,10 @@ static mp_obj_t ncm_ifconfig(
         was_started
         && self->enabled
     ) {
-        ncm_start_stack(
-            self
+        ncm_raise_esp_error(
+            ncm_start_stack(
+                self
+            )
         );
     }
 
@@ -1479,6 +1576,16 @@ static mp_obj_t ncm_stats(
             self_in
         );
 
+    if (
+        self->enabled
+        && !self->stack_started
+        && esp_ncm_transport_mounted()
+    ) {
+        (void)ncm_start_stack(
+            self
+        );
+    }
+
     mp_obj_t dict =
         mp_obj_new_dict(
             32
@@ -1537,6 +1644,14 @@ static mp_obj_t ncm_stats(
         MP_OBJ_NEW_QSTR(MP_QSTR_stack_started),
         mp_obj_new_bool(
             self->stack_started
+        )
+    );
+
+    mp_obj_dict_store(
+        dict,
+        MP_OBJ_NEW_QSTR(MP_QSTR_stack_starting),
+        mp_obj_new_bool(
+            self->stack_starting
         )
     );
 
