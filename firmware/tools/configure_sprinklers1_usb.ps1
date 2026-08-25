@@ -87,21 +87,14 @@ Invoke-NetshChecked -Arguments @(
     "register=none", "validate=no"
 )
 
-# Restart through the adapter object for compatibility with Windows versions
-# where Disable-NetAdapter/Enable-NetAdapter do not expose -InterfaceIndex.
-Get-NetAdapter -Name $alias | Disable-NetAdapter -Confirm:$false
-Start-Sleep -Seconds 2
-Get-NetAdapter -Name $alias | Enable-NetAdapter -Confirm:$false
-
-# Wait briefly for the NCM carrier to return.
-$deadline = (Get-Date).AddSeconds(15)
-do {
-    Start-Sleep -Milliseconds 500
-    $adapter = Get-NetAdapter -Name $alias
-} while ($adapter.Status -ne "Up" -and (Get-Date) -lt $deadline)
-
+# Do NOT disable/enable the NCM adapter here. Cycling the Windows network
+# adapter can cause CDC-NCM carrier re-enumeration problems on some hosts.
+# The static address is persistent and will be used as soon as USB carrier is Up.
+Start-Sleep -Milliseconds 500
+$adapter = Get-NetAdapter -Name $alias
 if ($adapter.Status -ne "Up") {
-    Write-Warning "The adapter did not return to Up state within 15 seconds. Current status: $($adapter.Status)"
+    Write-Warning "USB NCM carrier is currently $($adapter.Status). The static IP has been saved, but traffic will not work until the adapter is Up."
+    Write-Warning "Power-cycle or physically reconnect the Sprinklers1 USB device, then rerun the verification section of this script."
 }
 
 # Mark this directly attached controller network as Private when Windows has
@@ -112,6 +105,12 @@ if ($null -ne $profile) {
 } else {
     Write-Warning "Windows has not created a connection profile yet; NetworkCategory was not changed."
 }
+
+# Remove legacy host routes from the earlier 169.254.x.x configuration.
+# These are not needed after moving Sprinklers1 to 172.31.77.1/24.
+Get-NetRoute -InterfaceIndex $ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+    Where-Object { $_.DestinationPrefix -eq "169.254.196.1/32" } |
+    Remove-NetRoute -Confirm:$false -ErrorAction SilentlyContinue
 
 # The /24 connected route is created automatically by the static address. Add a
 # host-specific /32 as an explicit preference for Sprinklers1. New-NetRoute
@@ -160,6 +159,6 @@ foreach ($port in @(80, 8081)) {
         $ok = Test-NetConnection -ComputerName $DeviceAddress -Port $port -InformationLevel Quiet -WarningAction SilentlyContinue
         Write-Host ("TCP {0}: {1}" -f $port, $(if ($ok) { "reachable" } else { "not reachable" }))
     } catch {
-        Write-Host "TCP $port: test unavailable"
+        Write-Host "TCP ${port}: test unavailable"
     }
 }

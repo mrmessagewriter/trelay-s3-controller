@@ -804,6 +804,55 @@ static mp_obj_t esp32_ncm_ipconfig(struct netif *netif, size_t n_args, const mp_
 
 
 
+def patch_esp32_ncm_early_autoinit(micropython_dir):
+    """Initialize upstream USBD_NCM before TinyUSB enumeration on ESP32.
+
+    MicroPython's upstream NCM implementation relies on ncm_auto_init() running
+    before mp_usbd_init().  Ports that call mod_network_init() get this
+    automatically, but ESP32 does not currently call mod_network_init() from
+    ports/esp32/main.c.  Without this patch Windows can enumerate the placeholder
+    02:00:00:00:00:00 MAC and the first NCM RX frame can arrive while
+    ncm_obj.init is still false, which stalls reception.
+    """
+    source = micropython_dir / "ports" / "esp32" / "main.c"
+    data = source.read_text(encoding="utf-8")
+    sentinel = "SPRINKLERS1: early USBD_NCM auto-init"
+    if sentinel in data:
+        return
+
+    include_anchor = '#include "modnetwork.h"\n'
+    if include_anchor not in data:
+        raise RuntimeError("ESP32 main.c modnetwork include anchor not found")
+    include_block = (
+        include_anchor
+        + '#if MICROPY_PY_NETWORK_USBD_NCM\n'
+        + '#include "extmod/network_usbd_ncm.h"\n'
+        + '#endif\n'
+    )
+    data = data.replace(include_anchor, include_block, 1)
+
+    mp_init_re = re.compile(r"(?m)^(?P<indent>[ \t]*)mp_init\(\);[ \t]*$")
+    matches = list(mp_init_re.finditer(data))
+    if len(matches) != 1:
+        raise RuntimeError(
+            "Expected exactly one ESP32 mp_init() call; found {}".format(len(matches))
+        )
+    match = matches[0]
+    indent = match.group("indent")
+    early_init = (
+        "\n{0}#if MICROPY_PY_NETWORK_USBD_NCM"
+        "\n{0}// SPRINKLERS1: early USBD_NCM auto-init."
+        "\n{0}// Must run before mp_usbd_init() so the NCM MAC/netif exist"
+        "\n{0}// before Windows requests descriptors or sends its first frame."
+        "\n{0}ncm_auto_init();"
+        "\n{0}#endif"
+    ).format(indent)
+    data = data[: match.end()] + early_init + data[match.end() :]
+
+    source.write_text(data, encoding="utf-8")
+    print("Patched ESP32 startup to initialize USBD_NCM before USB enumeration.")
+
+
 def patch_upstream_ncm_ipv4_config(micropython_dir, address, netmask):
     """Replace upstream NCM's generated 169.254.x.1 address with a private LAN.
 
@@ -1007,6 +1056,7 @@ def main():
     patch_tinyusb_descriptor_compat(micropython_dir, esp32_dir)
     patch_tinyusb_link_state_compat(esp32_dir)
     patch_esp32_upstream_ncm_port_glue(micropython_dir)
+    patch_esp32_ncm_early_autoinit(micropython_dir)
     if config.get("ncm_ipv4_address"):
         patch_upstream_ncm_ipv4_config(
             micropython_dir,
