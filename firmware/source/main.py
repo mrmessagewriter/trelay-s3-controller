@@ -3048,6 +3048,48 @@ async def diagnostic_tcp_server():
                 pass
 
 
+
+async def periodic_usb_ncm_stats_task():
+
+    import asyncio
+
+    last_stats = None
+
+    while True:
+
+        await asyncio.sleep(3)
+
+        if usb_ncm is None:
+            continue
+
+        if not hasattr(
+            usb_ncm,
+            "stats"
+        ):
+            continue
+
+        try:
+            stats = usb_ncm.stats()
+
+            if stats != last_stats:
+
+                print()
+                print(
+                    "USB NCM stats:",
+                    stats
+                )
+
+                last_stats = stats
+
+        except Exception as e:
+
+            print(
+                "USB NCM stats error:",
+                repr(e)
+            )
+
+
+
 async def run_async_services():
 
     import asyncio
@@ -3056,6 +3098,10 @@ async def run_async_services():
     # bound before Microdot attempts to start.
     asyncio.create_task(
         diagnostic_tcp_server()
+    )
+
+    asyncio.create_task(
+        periodic_usb_ncm_stats_task()
     )
 
     await asyncio.sleep_ms(0)

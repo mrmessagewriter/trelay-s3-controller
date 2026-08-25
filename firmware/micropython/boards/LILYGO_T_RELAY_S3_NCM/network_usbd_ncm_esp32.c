@@ -383,6 +383,34 @@ typedef struct _ncm_obj_t {
     uint32_t tx_frames;
     uint32_t tx_bytes;
     uint32_t tx_errors;
+
+    uint32_t rx_arp;
+    uint32_t tx_arp;
+    uint32_t rx_ipv4;
+    uint32_t tx_ipv4;
+    uint32_t rx_icmp;
+    uint32_t tx_icmp;
+    uint32_t rx_tcp;
+    uint32_t tx_tcp;
+    uint32_t rx_udp;
+    uint32_t tx_udp;
+
+    uint32_t last_rx_len;
+    uint32_t last_tx_len;
+
+    uint32_t last_rx_ethertype;
+    uint32_t last_tx_ethertype;
+
+    uint32_t last_rx_ip_proto;
+    uint32_t last_tx_ip_proto;
+
+    uint32_t last_rx_tcp_src_port;
+    uint32_t last_rx_tcp_dst_port;
+    uint32_t last_rx_tcp_flags;
+
+    uint32_t last_tx_tcp_src_port;
+    uint32_t last_tx_tcp_dst_port;
+    uint32_t last_tx_tcp_flags;
 } ncm_obj_t;
 
 static ncm_obj_t ncm_obj;
@@ -425,6 +453,178 @@ static void ncm_free_rx_buffer(
     (void)ctx;
 }
 
+
+static uint16_t ncm_read_be16(
+    const uint8_t *p
+) {
+    return (uint16_t)(
+        ((uint16_t)p[0] << 8)
+        | p[1]
+    );
+}
+
+static void ncm_record_frame(
+    ncm_obj_t *self,
+    const void *buffer,
+    size_t len,
+    bool tx
+) {
+    if (
+        self == NULL
+        || buffer == NULL
+        || len < 14
+    ) {
+        return;
+    }
+
+    const uint8_t *frame =
+        (const uint8_t *)buffer;
+
+    uint16_t ethertype =
+        ncm_read_be16(
+            frame + 12
+        );
+
+    if (tx) {
+        self->last_tx_len =
+            (uint32_t)len;
+
+        self->last_tx_ethertype =
+            ethertype;
+    } else {
+        self->last_rx_len =
+            (uint32_t)len;
+
+        self->last_rx_ethertype =
+            ethertype;
+    }
+
+    if (ethertype == 0x0806) {
+        if (tx) {
+            self->tx_arp += 1;
+        } else {
+            self->rx_arp += 1;
+        }
+
+        return;
+    }
+
+    if (
+        ethertype != 0x0800
+        || len < 34
+    ) {
+        return;
+    }
+
+    if (tx) {
+        self->tx_ipv4 += 1;
+    } else {
+        self->rx_ipv4 += 1;
+    }
+
+    size_t ip_offset = 14;
+
+    uint8_t version_ihl =
+        frame[ip_offset];
+
+    if ((version_ihl >> 4) != 4) {
+        return;
+    }
+
+    size_t ihl =
+        (size_t)(
+            version_ihl & 0x0f
+        ) * 4;
+
+    if (
+        ihl < 20
+        || len < ip_offset + ihl
+    ) {
+        return;
+    }
+
+    uint8_t proto =
+        frame[ip_offset + 9];
+
+    if (tx) {
+        self->last_tx_ip_proto =
+            proto;
+    } else {
+        self->last_rx_ip_proto =
+            proto;
+    }
+
+    if (proto == 1) {
+        if (tx) {
+            self->tx_icmp += 1;
+        } else {
+            self->rx_icmp += 1;
+        }
+
+        return;
+    }
+
+    if (proto == 17) {
+        if (tx) {
+            self->tx_udp += 1;
+        } else {
+            self->rx_udp += 1;
+        }
+
+        return;
+    }
+
+    if (proto != 6) {
+        return;
+    }
+
+    if (tx) {
+        self->tx_tcp += 1;
+    } else {
+        self->rx_tcp += 1;
+    }
+
+    size_t tcp_offset =
+        ip_offset + ihl;
+
+    if (len < tcp_offset + 14) {
+        return;
+    }
+
+    uint16_t src_port =
+        ncm_read_be16(
+            frame + tcp_offset
+        );
+
+    uint16_t dst_port =
+        ncm_read_be16(
+            frame + tcp_offset + 2
+        );
+
+    uint8_t flags =
+        frame[tcp_offset + 13];
+
+    if (tx) {
+        self->last_tx_tcp_src_port =
+            src_port;
+
+        self->last_tx_tcp_dst_port =
+            dst_port;
+
+        self->last_tx_tcp_flags =
+            flags;
+    } else {
+        self->last_rx_tcp_src_port =
+            src_port;
+
+        self->last_rx_tcp_dst_port =
+            dst_port;
+
+        self->last_rx_tcp_flags =
+            flags;
+    }
+}
+
 /*
  * USB -> ESP-IDF network stack.
  *
@@ -449,6 +649,13 @@ static esp_err_t ncm_transport_rx(
 
     self->rx_frames += 1;
     self->rx_bytes += len;
+
+    ncm_record_frame(
+        self,
+        buffer,
+        len,
+        false
+    );
 
     esp_err_t err =
         esp_netif_receive(
@@ -498,6 +705,13 @@ static esp_err_t ncm_driver_transmit(
 
     self->tx_frames += 1;
     self->tx_bytes += (uint32_t)len;
+
+    ncm_record_frame(
+        self,
+        buffer,
+        len,
+        true
+    );
 
     esp_err_t err =
         esp_ncm_transport_send_sync(
@@ -1243,6 +1457,20 @@ static MP_DEFINE_CONST_FUN_OBJ_KW(
     ncm_config
 );
 
+static void ncm_stats_store_u32(
+    mp_obj_t dict,
+    qstr key,
+    uint32_t value
+) {
+    mp_obj_dict_store(
+        dict,
+        MP_OBJ_NEW_QSTR(key),
+        mp_obj_new_int_from_uint(
+            value
+        )
+    );
+}
+
 static mp_obj_t ncm_stats(
     mp_obj_t self_in
 ) {
@@ -1253,59 +1481,79 @@ static mp_obj_t ncm_stats(
 
     mp_obj_t dict =
         mp_obj_new_dict(
-            6
+            32
         );
 
+    ncm_stats_store_u32(dict, MP_QSTR_rx_frames, self->rx_frames);
+    ncm_stats_store_u32(dict, MP_QSTR_rx_bytes, self->rx_bytes);
+    ncm_stats_store_u32(dict, MP_QSTR_rx_errors, self->rx_errors);
+
+    ncm_stats_store_u32(dict, MP_QSTR_tx_frames, self->tx_frames);
+    ncm_stats_store_u32(dict, MP_QSTR_tx_bytes, self->tx_bytes);
+    ncm_stats_store_u32(dict, MP_QSTR_tx_errors, self->tx_errors);
+
+    ncm_stats_store_u32(dict, MP_QSTR_rx_arp, self->rx_arp);
+    ncm_stats_store_u32(dict, MP_QSTR_tx_arp, self->tx_arp);
+
+    ncm_stats_store_u32(dict, MP_QSTR_rx_ipv4, self->rx_ipv4);
+    ncm_stats_store_u32(dict, MP_QSTR_tx_ipv4, self->tx_ipv4);
+
+    ncm_stats_store_u32(dict, MP_QSTR_rx_icmp, self->rx_icmp);
+    ncm_stats_store_u32(dict, MP_QSTR_tx_icmp, self->tx_icmp);
+
+    ncm_stats_store_u32(dict, MP_QSTR_rx_tcp, self->rx_tcp);
+    ncm_stats_store_u32(dict, MP_QSTR_tx_tcp, self->tx_tcp);
+
+    ncm_stats_store_u32(dict, MP_QSTR_rx_udp, self->rx_udp);
+    ncm_stats_store_u32(dict, MP_QSTR_tx_udp, self->tx_udp);
+
+    ncm_stats_store_u32(dict, MP_QSTR_last_rx_len, self->last_rx_len);
+    ncm_stats_store_u32(dict, MP_QSTR_last_tx_len, self->last_tx_len);
+
+    ncm_stats_store_u32(dict, MP_QSTR_last_rx_ethertype, self->last_rx_ethertype);
+    ncm_stats_store_u32(dict, MP_QSTR_last_tx_ethertype, self->last_tx_ethertype);
+
+    ncm_stats_store_u32(dict, MP_QSTR_last_rx_ip_proto, self->last_rx_ip_proto);
+    ncm_stats_store_u32(dict, MP_QSTR_last_tx_ip_proto, self->last_tx_ip_proto);
+
+    ncm_stats_store_u32(dict, MP_QSTR_last_rx_tcp_src_port, self->last_rx_tcp_src_port);
+    ncm_stats_store_u32(dict, MP_QSTR_last_rx_tcp_dst_port, self->last_rx_tcp_dst_port);
+    ncm_stats_store_u32(dict, MP_QSTR_last_rx_tcp_flags, self->last_rx_tcp_flags);
+
+    ncm_stats_store_u32(dict, MP_QSTR_last_tx_tcp_src_port, self->last_tx_tcp_src_port);
+    ncm_stats_store_u32(dict, MP_QSTR_last_tx_tcp_dst_port, self->last_tx_tcp_dst_port);
+    ncm_stats_store_u32(dict, MP_QSTR_last_tx_tcp_flags, self->last_tx_tcp_flags);
+
     mp_obj_dict_store(
         dict,
-        MP_OBJ_NEW_QSTR(MP_QSTR_rx_frames),
-        mp_obj_new_int_from_uint(
-            self->rx_frames
+        MP_OBJ_NEW_QSTR(MP_QSTR_mounted),
+        mp_obj_new_bool(
+            esp_ncm_transport_mounted()
         )
     );
 
     mp_obj_dict_store(
         dict,
-        MP_OBJ_NEW_QSTR(MP_QSTR_rx_bytes),
-        mp_obj_new_int_from_uint(
-            self->rx_bytes
+        MP_OBJ_NEW_QSTR(MP_QSTR_stack_started),
+        mp_obj_new_bool(
+            self->stack_started
         )
     );
 
     mp_obj_dict_store(
         dict,
-        MP_OBJ_NEW_QSTR(MP_QSTR_rx_errors),
-        mp_obj_new_int_from_uint(
-            self->rx_errors
-        )
-    );
-
-    mp_obj_dict_store(
-        dict,
-        MP_OBJ_NEW_QSTR(MP_QSTR_tx_frames),
-        mp_obj_new_int_from_uint(
-            self->tx_frames
-        )
-    );
-
-    mp_obj_dict_store(
-        dict,
-        MP_OBJ_NEW_QSTR(MP_QSTR_tx_bytes),
-        mp_obj_new_int_from_uint(
-            self->tx_bytes
-        )
-    );
-
-    mp_obj_dict_store(
-        dict,
-        MP_OBJ_NEW_QSTR(MP_QSTR_tx_errors),
-        mp_obj_new_int_from_uint(
-            self->tx_errors
+        MP_OBJ_NEW_QSTR(MP_QSTR_netif_up),
+        mp_obj_new_bool(
+            self->netif != NULL
+            && esp_netif_is_netif_up(
+                self->netif
+            )
         )
     );
 
     return dict;
 }
+
 static MP_DEFINE_CONST_FUN_OBJ_1(
     ncm_stats_obj,
     ncm_stats
