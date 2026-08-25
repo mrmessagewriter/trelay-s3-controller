@@ -2900,9 +2900,165 @@ async def periodic_event_task():
         await asyncio.sleep(10)
 
 
+
+async def diagnostic_tcp_server():
+    """Minimal raw TCP/HTTP diagnostic server on port 8081.
+
+    This bypasses Microdot completely. If this listener is reachable over USB
+    while Microdot on port 80 is not, the remaining problem is in the Microdot
+    server path. If this listener is also unreachable, the remaining problem is
+    in TCP/socket handling below Microdot.
+    """
+
+    import asyncio
+    import socket
+
+    server = None
+
+    try:
+        server = socket.socket()
+
+        try:
+            server.setsockopt(
+                socket.SOL_SOCKET,
+                socket.SO_REUSEADDR,
+                1
+            )
+        except Exception:
+            pass
+
+        server.bind(
+            ("0.0.0.0", 8081)
+        )
+
+        server.listen(2)
+        server.setblocking(False)
+
+        print(
+            "Raw TCP diagnostic listening on 0.0.0.0:8081"
+        )
+
+    except Exception as e:
+
+        print(
+            "ERROR: Raw TCP diagnostic listener failed:",
+            repr(e)
+        )
+
+        try:
+            if server is not None:
+                server.close()
+        except Exception:
+            pass
+
+        return
+
+
+    while True:
+
+        client = None
+
+        try:
+            client, address = server.accept()
+
+        except OSError:
+            await asyncio.sleep_ms(50)
+            continue
+
+        except Exception as e:
+
+            print(
+                "Raw TCP accept error:",
+                repr(e)
+            )
+
+            await asyncio.sleep_ms(100)
+            continue
+
+
+        try:
+
+            try:
+                client.settimeout(1)
+            except Exception:
+                pass
+
+            try:
+                client.recv(512)
+            except Exception:
+                pass
+
+            stats = {}
+
+            try:
+                if usb_ncm is not None and hasattr(usb_ncm, "stats"):
+                    stats = usb_ncm.stats()
+            except Exception as e:
+                stats = {
+                    "error":
+                        repr(e)
+                }
+
+            body = (
+                "Sprinklers1 raw TCP diagnostic OK\n"
+                "USB IP: " +
+                str(usb_ip()) +
+                "\n"
+                "Wi-Fi IP: " +
+                str(wifi_ip()) +
+                "\n"
+                "USB stats: " +
+                repr(stats) +
+                "\n"
+            )
+
+            body_bytes = body.encode()
+
+            response = (
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: text/plain\r\n"
+                "Connection: close\r\n"
+                "Content-Length: " +
+                str(len(body_bytes)) +
+                "\r\n"
+                "\r\n"
+            ).encode() + body_bytes
+
+            client.sendall(
+                response
+            )
+
+            print(
+                "Raw TCP diagnostic request from:",
+                address
+            )
+
+        except Exception as e:
+
+            print(
+                "Raw TCP diagnostic client error:",
+                repr(e)
+            )
+
+        finally:
+
+            try:
+                client.close()
+            except Exception:
+                pass
+
+
 async def run_async_services():
 
     import asyncio
+
+    # Start a low-level diagnostic listener first. Yield once so the socket is
+    # bound before Microdot attempts to start.
+    asyncio.create_task(
+        diagnostic_tcp_server()
+    )
+
+    await asyncio.sleep_ms(0)
 
     asyncio.create_task(
         periodic_time_sync_task()
@@ -2920,20 +3076,64 @@ async def run_async_services():
             periodic_event_task()
         )
 
-    await app.start_server(
-        host="0.0.0.0",
-        port=WEB_PORT,
-        debug=False
+    print(
+        "Starting Microdot on 0.0.0.0:{}...".format(
+            WEB_PORT
+        )
     )
+
+    try:
+
+        await app.start_server(
+            host="0.0.0.0",
+            port=WEB_PORT,
+            debug=True
+        )
+
+    except Exception as e:
+
+        print(
+            "ERROR: Microdot server failed:",
+            repr(e)
+        )
+
+        try:
+            import sys
+            sys.print_exception(e)
+        except Exception:
+            pass
+
+        raise
 
 
 def run_web_server():
 
     import asyncio
 
-    asyncio.run(
-        run_async_services()
+    print(
+        "Entering asyncio event loop."
     )
+
+    try:
+
+        asyncio.run(
+            run_async_services()
+        )
+
+    except Exception as e:
+
+        print(
+            "ERROR: Web event loop exited:",
+            repr(e)
+        )
+
+        try:
+            import sys
+            sys.print_exception(e)
+        except Exception:
+            pass
+
+        raise
 
 
 # ============================================================
@@ -3060,9 +3260,9 @@ def main():
     # --------------------------------------------------------
     # Web server
     #
-    # Once USB NCM is active, avoid additional CDC-console output before
-    # starting Microdot.  CDC and NCM share the native USB/TinyUSB device;
-    # a blocked console write must not prevent HTTP startup.
+    # Start the diagnostic TCP listener and Microdot. The diagnostic listener
+    # on port 8081 bypasses Microdot so TCP/socket operation can be tested
+    # independently from the application web framework.
     # --------------------------------------------------------
 
     initialize_web_server()
