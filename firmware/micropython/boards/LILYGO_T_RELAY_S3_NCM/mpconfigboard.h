@@ -32,6 +32,18 @@
 
 #define MICROPY_HW_USB_PRODUCT_FS_STRING "LILYGO T-Relay S3 MicroPython"
 #define MICROPY_HW_USB_CDC_INTERFACE_STRING "MicroPython Console"
+
+/*
+ * Do not let an unopened USB CDC console delay application startup.
+ *
+ * MicroPython's TinyUSB CDC writer waits up to MICROPY_HW_USB_CDC_TX_TIMEOUT
+ * whenever the TX FIFO cannot make forward progress.  This controller emits
+ * substantial startup diagnostics, while CDC and NCM share the same USB
+ * device.  A zero timeout makes console output best-effort/lossy when the host
+ * has not opened the serial console, so HTTP/NCM startup never depends on DTR.
+ */
+#define MICROPY_HW_USB_CDC_TX_TIMEOUT (0)
+
 #define MICROPY_PY_NETWORK_USBD_NCM_INTERFACE_STRING "MicroPython USB Network"
 
 #define MICROPY_HW_I2C0_SCL (9)

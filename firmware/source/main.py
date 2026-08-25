@@ -2934,11 +2934,20 @@ async def diagnostic_tcp_server():
         server.listen(2)
         server.setblocking(False)
 
+        # Green now means that at least one real TCP listening socket has
+        # successfully bound.  This is more useful than turning it on before
+        # the HTTP/TCP server phase begins.
+        red_led(False)
+        green_led(True)
+
         print(
             "Raw TCP diagnostic listening on 0.0.0.0:8081"
         )
 
     except Exception as e:
+
+        green_led(False)
+        red_led(True)
 
         print(
             "ERROR: Raw TCP diagnostic listener failed:",
@@ -3299,8 +3308,10 @@ def main():
     # treating an unsynchronized RTC as valid scheduler time.
     initialize_events()
 
+    # Keep the readiness LED off until a TCP listener has actually bound.
+    # diagnostic_tcp_server() turns green on after port 8081 is listening.
     red_led(False)
-    green_led(True)
+    green_led(False)
 
 
     # --------------------------------------------------------
