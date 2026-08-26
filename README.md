@@ -63,6 +63,7 @@ Octal PSRAM. Use the MicroPython ESP32-S3 **SPIRAM_OCT** build so the PSRAM is
 available to MicroPython.
 The code can be built from the build files in this repo, or download the binary here: https://github.com/mrmessagewriter/trelay-s3-controller/releases/download/micropython-LILYGO_T_RELAY_S3_NCM-v1.0.15/LILYGO_T_RELAY_S3_NCM-SPIRAM_OCT-v1.0.15.bin
 The latest version of the MicroPython app here: https://github.com/mrmessagewriter/trelay-s3-controller/releases/download/v1.0.22/LilyGo-T-Relay-S3-Controller-Firmware-v1.0.22.zip
+You can upload this using `upload_sprinkler_firmware.py` 
 
 You will need to install the Micropython itself first, then the Micropython App.   
 This Micropython provides the HTTP over USB, so that you can connect via the USB to configure the WiFi, using the settings of the device. 
