@@ -1,6 +1,6 @@
-# Sprinklers1
+# TRelay-S3-Controller
 
-Sprinklers1 is a MicroPython-based Wi-Fi sprinkler/relay controller for the
+MicroPython-based Wi-Fi relay controller for the
 LILYGO T-Relay ESP32-S3.
 
 The project currently provides:
