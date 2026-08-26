@@ -103,53 +103,15 @@ jobs:
           Write-Host "Release tag: $tag"
           Write-Host "Release package: $packageName"
 
-      - name: Build uncompressed application release package
+      - name: Prepare application release package
         shell: pwsh
         env:
           PACKAGE_PATH: ${{ steps.firmware.outputs.package_path }}
         run: |
-          @'
-          import os
-          import zipfile
-          from pathlib import Path
-
-          package_path = Path(os.environ["PACKAGE_PATH"])
-          package_path.parent.mkdir(parents=True, exist_ok=True)
-
-          if package_path.exists():
-              package_path.unlink()
-
-          files = {
-              "device_loader_main.py": Path(
-                  "firmware/source/device_loader_main.py"
-              ),
-              "main.zip": Path(
-                  "firmware/dist/main.zip"
-              ),
-          }
-
-          for archive_name, source_path in files.items():
-              if not source_path.is_file():
-                  raise SystemExit(
-                      "Missing release input: {}".format(source_path)
-                  )
-
-          with zipfile.ZipFile(
-              package_path,
-              "w",
-              compression=zipfile.ZIP_STORED,
-              allowZip64=True,
-          ) as archive:
-              for archive_name, source_path in files.items():
-                  archive.write(
-                      source_path,
-                      arcname=archive_name,
-                      compress_type=zipfile.ZIP_STORED,
-                  )
-
-          print("Created uncompressed release package:")
-          print(package_path)
-          '@ | python -
+          $source = (Resolve-Path "firmware\dist\deployment.zip").Path
+          $destination = $env:PACKAGE_PATH
+          Copy-Item -LiteralPath $source -Destination $destination -Force
+          Write-Host "Prepared self-contained release package: $destination"
 
       - name: Verify uncompressed application release package
         shell: pwsh
@@ -165,6 +127,7 @@ jobs:
           package_path = Path(os.environ["PACKAGE_PATH"])
 
           required = {
+              "boot.py",
               "device_loader_main.py",
               "main.zip",
           }

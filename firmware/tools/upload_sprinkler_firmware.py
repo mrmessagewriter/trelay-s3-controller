@@ -6,10 +6,14 @@ Examples, from firmware/tools:
     python upload_sprinkler_firmware.py COM3
     python upload_sprinkler_firmware.py COM3 --build
     python upload_sprinkler_firmware.py --build-only
-    python upload_sprinkler_firmware.py COM3 --build --install-loader
+    python upload_sprinkler_firmware.py COM3 --build
 
-The uploader replaces only /main.zip during a normal firmware update.
-It does not overwrite /config.json or /events.json.
+The default deployment package installs:
+    boot.py               -> /boot.py
+    device_loader_main.py -> /main.py
+    main.zip              -> /main.zip
+
+/config.json and /events.json are preserved.
 """
 
 from __future__ import annotations
@@ -28,10 +32,14 @@ from pathlib import Path
 DEFAULT_PORT = "COM3"
 
 REMOTE_FIRMWARE = "/main.zip"
-REMOTE_TEMP = "/main.zip.new"
+REMOTE_FIRMWARE_TEMP = "/main.zip.new"
+REMOTE_BOOT = "/boot.py"
+REMOTE_BOOT_TEMP = "/boot.py.new"
 REMOTE_LOADER = "/main.py"
+REMOTE_LOADER_TEMP = "/main.py.new"
 
 FIRMWARE_INFO = "firmware_info.json"
+DEPLOYMENT_FILENAME = "deployment.zip"
 
 
 def parse_args():
@@ -70,22 +78,27 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--install-loader",
+        "--skip-bootstrap",
         action="store_true",
         help=(
-            "Also install source/"
-            "device_loader_main.py "
-            "as /main.py."
+            "Upload only /main.zip. By default the uploader also installs "
+            "/boot.py and the permanent ZIP loader as /main.py."
         ),
+    )
+
+    parser.add_argument(
+        "--install-loader",
+        action="store_true",
+        help=argparse.SUPPRESS,
     )
 
     parser.add_argument(
         "--firmware",
         default=None,
         help=(
-            "Firmware ZIP path. May be either the inner main.zip or a "
-            "downloaded LilyGo T-Relay-S3 Controller Firmware release ZIP "
-            "containing main.zip. Defaults to firmware/dist/main.zip."
+            "Firmware path. May be deployment.zip, a downloaded release "
+            "ZIP containing boot.py/device_loader_main.py/main.zip, or the "
+            "inner main.zip. Defaults to firmware/dist/deployment.zip."
         ),
     )
 
@@ -403,6 +416,7 @@ def prepare_firmware_package(
     Returns:
         metadata,
         upload_path,
+        embedded_boot_path,
         embedded_loader_path,
         input_kind
     """
@@ -448,6 +462,7 @@ def prepare_firmware_package(
                 metadata,
                 firmware_path,
                 None,
+                None,
                 "device firmware ZIP",
             )
 
@@ -455,6 +470,7 @@ def prepare_firmware_package(
         # GitHub release package:
         #
         #   LilyGo-T-Relay-S3-Controller-Firmware-vX.Y.Z.zip
+        #     boot.py
         #     device_loader_main.py
         #     main.zip
         # ----------------------------------------------------
@@ -501,14 +517,23 @@ def prepare_firmware_package(
             main_zip_bytes
         )
 
+        embedded_boot = None
         embedded_loader = None
+
+        if "boot.py" in names:
+            embedded_boot = (
+                extraction_dir /
+                "boot.py"
+            )
+            embedded_boot.write_bytes(
+                outer.read("boot.py")
+            )
 
         if "device_loader_main.py" in names:
             embedded_loader = (
                 extraction_dir /
                 "device_loader_main.py"
             )
-
             embedded_loader.write_bytes(
                 outer.read(
                     "device_loader_main.py"
@@ -518,8 +543,9 @@ def prepare_firmware_package(
         return (
             metadata,
             extracted_firmware,
+            embedded_boot,
             embedded_loader,
-            "release package",
+            "deployment package",
         )
 
 
@@ -619,55 +645,28 @@ def remote_sha256(
     )
 
 
-def install_loader(
+def stage_verified_file(
     port,
-    loader_path,
+    local_path,
+    remote_temp,
+    label,
 ):
-    if not loader_path.is_file():
+    if not local_path.is_file():
         raise FileNotFoundError(
-            "Missing device loader: "
-            + str(
-                loader_path
+            "Missing {}: {}".format(
+                label,
+                local_path,
             )
         )
 
-    print()
-    print(
-        "Installing permanent "
-        "ZIP loader..."
-    )
-
-    run(
-        mpremote(
-            port,
-            "fs",
-            "cp",
-            str(
-                loader_path
-            ),
-            ":"
-            + REMOTE_LOADER,
-        )
-    )
-
-
-def upload_firmware(
-    port,
-    firmware_path,
-):
-    local_hash = sha256_file(
-        firmware_path
-    )
+    local_hash = sha256_file(local_path)
 
     print()
-    print(
-        "Uploading firmware to "
-        "temporary device path..."
-    )
+    print("Staging {}...".format(label))
 
     remove_remote_if_present(
         port,
-        REMOTE_TEMP,
+        remote_temp,
     )
 
     run(
@@ -675,76 +674,139 @@ def upload_firmware(
             port,
             "fs",
             "cp",
-            str(
-                firmware_path
-            ),
-            ":"
-            + REMOTE_TEMP,
+            str(local_path),
+            ":" + remote_temp,
         )
-    )
-
-    print()
-    print(
-        "Verifying transferred "
-        "firmware..."
     )
 
     device_hash = remote_sha256(
         port,
-        REMOTE_TEMP,
+        remote_temp,
     )
 
-    if (
-        device_hash
-        != local_hash
-    ):
+    if device_hash != local_hash:
         remove_remote_if_present(
             port,
-            REMOTE_TEMP,
+            remote_temp,
         )
-
         raise RuntimeError(
-            "Firmware transfer verification "
-            "failed.\n"
+            "{} transfer verification failed.\n"
             "  Local SHA-256:  {}\n"
             "  Device SHA-256: {}".format(
+                label,
                 local_hash,
-                device_hash
+                device_hash,
             )
         )
 
     print(
-        "Transfer SHA-256 verified:",
-        local_hash,
+        "{} SHA-256 verified: {}".format(
+            label,
+            local_hash,
+        )
     )
 
-    print()
-    print(
-        "Activating new firmware..."
-    )
 
-    activation_code = (
-        "import os\n"
-        "new={!r}\n"
-        "current={!r}\n"
-        "try:\n"
-        " os.remove(current)\n"
-        "except OSError:\n"
-        " pass\n"
-        "os.rename(new,current)\n"
-        "print('Firmware activated:',"
-        "current)\n"
-    ).format(
-        REMOTE_TEMP,
-        REMOTE_FIRMWARE,
+def activate_deployment(
+    port,
+    staged_items,
+):
+    """Activate all already-verified staged files in one REPL command."""
+
+    lines = [
+        "import os",
+        "def rm(p):",
+        " try:",
+        "  os.remove(p)",
+        " except OSError:",
+        "  pass",
+    ]
+
+    for remote_temp, remote_current in staged_items:
+        lines.extend(
+            [
+                "rm({!r})".format(
+                    remote_current + ".bak"
+                ),
+                "try:",
+                " os.rename({!r},{!r})".format(
+                    remote_current,
+                    remote_current + ".bak",
+                ),
+                "except OSError:",
+                " pass",
+                "os.rename({!r},{!r})".format(
+                    remote_temp,
+                    remote_current,
+                ),
+            ]
+        )
+
+    for _, remote_current in staged_items:
+        lines.append(
+            "rm({!r})".format(
+                remote_current + ".bak"
+            )
+        )
+
+    lines.append(
+        "print('Deployment activated')"
     )
 
     run(
         mpremote(
             port,
             "exec",
-            activation_code,
+            "\n".join(lines) + "\n",
         )
+    )
+
+
+def upload_deployment(
+    port,
+    firmware_path,
+    boot_path,
+    loader_path,
+    install_bootstrap=True,
+):
+    staged = []
+
+    if install_bootstrap:
+        stage_verified_file(
+            port,
+            boot_path,
+            REMOTE_BOOT_TEMP,
+            "boot.py",
+        )
+        staged.append(
+            (REMOTE_BOOT_TEMP, REMOTE_BOOT)
+        )
+
+        stage_verified_file(
+            port,
+            loader_path,
+            REMOTE_LOADER_TEMP,
+            "device loader (/main.py)",
+        )
+        staged.append(
+            (REMOTE_LOADER_TEMP, REMOTE_LOADER)
+        )
+
+    stage_verified_file(
+        port,
+        firmware_path,
+        REMOTE_FIRMWARE_TEMP,
+        "application firmware (/main.zip)",
+    )
+    staged.append(
+        (REMOTE_FIRMWARE_TEMP, REMOTE_FIRMWARE)
+    )
+
+    print()
+    print("Activating verified deployment...")
+    activate_deployment(
+        port,
+        staged,
     )
 
 
@@ -787,6 +849,12 @@ def main():
         "build_firmware_deployment.py"
     )
 
+    repository_boot_path = (
+        firmware_dir /
+        "source" /
+        "boot.py"
+    )
+
     repository_loader_path = (
         firmware_dir /
         "source" /
@@ -801,7 +869,7 @@ def main():
         else (
             firmware_dir /
             "dist" /
-            "main.zip"
+            DEPLOYMENT_FILENAME
         ).resolve()
     )
 
@@ -820,11 +888,11 @@ def main():
                 builder_path
             )
 
-            # A local build always produces the direct inner image.
+            # A local build produces a self-contained deployment package.
             firmware_input_path = (
                 firmware_dir /
                 "dist" /
-                "main.zip"
+                DEPLOYMENT_FILENAME
             ).resolve()
 
         with tempfile.TemporaryDirectory(
@@ -838,6 +906,7 @@ def main():
             (
                 metadata,
                 upload_path,
+                embedded_boot_path,
                 embedded_loader_path,
                 input_kind,
             ) = prepare_firmware_package(
@@ -912,34 +981,47 @@ def main():
                 args.port
             )
 
+            install_bootstrap = not args.skip_bootstrap
+
             if args.install_loader:
+                # Compatibility with older command lines. Bootstrap files are
+                # installed by default now.
+                install_bootstrap = True
+
+            if install_bootstrap:
+                boot_path = (
+                    embedded_boot_path
+                    if embedded_boot_path is not None
+                    else repository_boot_path
+                )
                 loader_path = (
                     embedded_loader_path
-                    if embedded_loader_path
-                    is not None
+                    if embedded_loader_path is not None
                     else repository_loader_path
                 )
 
-                if (
-                    embedded_loader_path
-                    is not None
-                ):
-                    print()
-                    print(
-                        "Using loader embedded "
-                        "in release package."
+                if not boot_path.is_file():
+                    raise FileNotFoundError(
+                        "Deployment does not contain boot.py and no repository "
+                        "fallback exists: {}".format(boot_path)
                     )
 
-                install_loader(
-                    args.port,
-                    loader_path
-                )
+                if not loader_path.is_file():
+                    raise FileNotFoundError(
+                        "Deployment does not contain device_loader_main.py and "
+                        "no repository fallback exists: {}".format(loader_path)
+                    )
 
-            # Always upload the actual inner main.zip.
-            # Never upload the outer GitHub release package to /main.zip.
-            upload_firmware(
+            else:
+                boot_path = None
+                loader_path = None
+
+            upload_deployment(
                 args.port,
-                upload_path
+                upload_path,
+                boot_path,
+                loader_path,
+                install_bootstrap=install_bootstrap,
             )
 
             if not args.no_reset:
@@ -970,6 +1052,16 @@ def main():
             print(
                 "  Device:",
                 args.port
+            )
+            if install_bootstrap:
+                print(
+                    "  /boot.py installed"
+                )
+                print(
+                    "  /main.py loader installed"
+                )
+            print(
+                "  /main.zip installed"
             )
             print(
                 "  /config.json preserved"

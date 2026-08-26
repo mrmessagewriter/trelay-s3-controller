@@ -13,18 +13,28 @@ Repository layout expected by this tool:
         build_firmware_deployment.py
         next_firmware_version.json
       dist/
-        main.zip                 # generated, not source
+        main.zip                 # generated application image
+        deployment.zip           # generated self-contained deployment package
 
-The generated main.zip is intentionally uncompressed (ZIP_STORED).
-firmware_info.json is generated during the build and placed inside
-main.zip. next_firmware_version.json is advanced only after a verified
-successful build.
+The generated ZIP files are intentionally uncompressed (ZIP_STORED).
+
+main.zip contains the Sprinklers1 application and firmware_info.json.
+
+deployment.zip contains:
+    boot.py
+    device_loader_main.py
+    main.zip
+
+The uploader installs those as /boot.py, /main.py, and /main.zip.
+next_firmware_version.json is advanced only after both generated ZIP
+files have been verified successfully.
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import sys
 import zipfile
@@ -34,6 +44,7 @@ from pathlib import Path
 FIRMWARE_NAME = "Sprinklers1"
 FIRMWARE_INFO = "firmware_info.json"
 VERSION_FILE = "next_firmware_version.json"
+DEPLOYMENT_FILENAME = "deployment.zip"
 
 REQUIRED_FILES = {
     "main.py",
@@ -49,7 +60,15 @@ REQUIRED_FILES = {
 # This file is device-side source, but it is the permanent loader installed
 # as /main.py on the writable filesystem. It must not be packaged into
 # /main.zip because the application itself also contains main.py.
+# These files live at the writable filesystem root and are carried by
+# deployment.zip. They must not be included inside /main.zip.
 EXCLUDED_SOURCE_FILES = {
+    "boot.py",
+    "device_loader_main.py",
+}
+
+REQUIRED_DEPLOYMENT_FILES = {
+    "boot.py",
     "device_loader_main.py",
 }
 
@@ -78,6 +97,15 @@ def parse_args():
         help=(
             "Output firmware ZIP. Defaults to ../dist/main.zip relative "
             "to this tool."
+        ),
+    )
+
+    parser.add_argument(
+        "--package-output",
+        default=None,
+        help=(
+            "Self-contained deployment ZIP. Defaults to "
+            "../dist/deployment.zip relative to this tool."
         ),
     )
 
@@ -427,6 +455,119 @@ def verify_zip(
             )
 
 
+def write_deployment_zip(
+    output,
+    source,
+    main_zip,
+):
+    deployment_inputs = {
+        "boot.py": source / "boot.py",
+        "device_loader_main.py": source / "device_loader_main.py",
+        "main.zip": main_zip,
+    }
+
+    missing = [
+        "{} -> {}".format(name, path)
+        for name, path in deployment_inputs.items()
+        if not path.is_file()
+    ]
+
+    if missing:
+        raise FileNotFoundError(
+            "Deployment inputs are missing:\n  "
+            + "\n  ".join(missing)
+        )
+
+    output.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    temp = output.with_suffix(
+        output.suffix + ".tmp"
+    )
+
+    if temp.exists():
+        temp.unlink()
+
+    with zipfile.ZipFile(
+        temp,
+        "w",
+        compression=zipfile.ZIP_STORED,
+        allowZip64=True,
+    ) as archive:
+        for archive_name, source_path in deployment_inputs.items():
+            archive.write(
+                source_path,
+                arcname=archive_name,
+                compress_type=zipfile.ZIP_STORED,
+            )
+
+    temp.replace(output)
+
+
+def verify_deployment_zip(
+    output,
+    expected_main_zip,
+):
+    required = {
+        "boot.py",
+        "device_loader_main.py",
+        "main.zip",
+    }
+
+    with zipfile.ZipFile(
+        output,
+        "r",
+    ) as outer:
+        infos = outer.infolist()
+        names = {
+            info.filename
+            for info in infos
+            if not info.is_dir()
+        }
+
+        if names != required:
+            raise ValueError(
+                "Unexpected deployment ZIP contents: {}".format(
+                    sorted(names)
+                )
+            )
+
+        for info in infos:
+            if (
+                not info.is_dir()
+                and info.compress_type != zipfile.ZIP_STORED
+            ):
+                raise ValueError(
+                    "Compressed deployment entry found: "
+                    + info.filename
+                )
+
+        embedded_main = outer.read("main.zip")
+
+    expected_main = expected_main_zip.read_bytes()
+
+    if embedded_main != expected_main:
+        raise ValueError(
+            "Embedded main.zip differs from the verified build output."
+        )
+
+    with zipfile.ZipFile(
+        io.BytesIO(embedded_main),
+        "r",
+    ) as inner:
+        for info in inner.infolist():
+            if (
+                not info.is_dir()
+                and info.compress_type != zipfile.ZIP_STORED
+            ):
+                raise ValueError(
+                    "Compressed main.zip entry found inside deployment ZIP: "
+                    + info.filename
+                )
+
+
 def update_next_version(
     version_path,
     current_version,
@@ -486,6 +627,18 @@ def main():
         ).resolve()
     )
 
+    package_output = (
+        Path(
+            args.package_output
+        ).resolve()
+        if args.package_output
+        else (
+            firmware_dir /
+            "dist" /
+            DEPLOYMENT_FILENAME
+        ).resolve()
+    )
+
     version_path = (
         Path(
             args.version_file
@@ -505,6 +658,18 @@ def main():
         files = collect_firmware_files(
             source
         )
+
+        missing_deployment = sorted(
+            name
+            for name in REQUIRED_DEPLOYMENT_FILES
+            if not (source / name).is_file()
+        )
+
+        if missing_deployment:
+            raise FileNotFoundError(
+                "Required deployment files are missing:\n  "
+                + "\n  ".join(missing_deployment)
+            )
 
         checksum = calculate_checksum(
             files
@@ -560,6 +725,17 @@ def main():
             checksum,
         )
 
+        write_deployment_zip(
+            package_output,
+            source,
+            output,
+        )
+
+        verify_deployment_zip(
+            package_output,
+            output,
+        )
+
         next_version = (
             update_next_version(
                 version_path,
@@ -594,6 +770,10 @@ def main():
         print(
             "  Output:     ",
             output
+        )
+        print(
+            "  Package:    ",
+            package_output
         )
         print(
             "  Next build: ",
