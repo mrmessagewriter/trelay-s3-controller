@@ -1,42 +1,38 @@
-# MicroPython Master USB-NCM Runtime
+# MicroPython USB-NCM Runtime
 
-Sprinklers1 builds its LILYGO T-Relay ESP32-S3 runtime from the current
-MicroPython `master` branch.
+TRelay-S3-Controller can operate over Wi-Fi with a normal compatible MicroPython installation. The custom runtime described here is only required when the controller should also be reachable as a network device over its USB connection.
 
-## Design rule
+## Runtime design
 
-The build uses MicroPython's upstream `extmod/network_usbd_ncm.c` as the NCM
-implementation. It no longer copies the old Sprinklers1
-`network_usbd_ncm_esp32.c` over the upstream source.
-
-The ESP32 port does not currently expose all of the generic `MICROPY_PY_LWIP`
-helpers expected by upstream NCM, so `build_micropython_ncm.py` applies a narrow
-build-time compatibility shim. The shim:
-
-- Uses ESP-IDF lwIP core locking.
-- Routes NCM receive frames through `tcpip_input()`.
-- Gets the ESP32 Ethernet MAC with `esp_read_mac()`.
-- Supplies query-only `ifconfig()` / `ipconfig()` helpers.
-- Compiles MicroPython's shared DHCP server for NCM.
-- Preserves upstream NCM `ncm_auto_init()`, `active()`, `isconnected()`, link
-  state signaling, DHCP behavior, and link-local address generation.
-
-The build helper also detects the TinyUSB NCM API available in the ESP32
-managed component. If MicroPython's pinned TinyUSB predates dynamic NCM carrier
-signaling, the builder backports the link-state API rather than stubbing it.
-
-## USB address
-
-Sprinklers1 overrides MicroPython master's default `169.254.x.1/16` link-local
-address and uses a normal RFC1918 private LAN for the USB link:
+The custom board/runtime is built for:
 
 ```text
-ESP32:   172.31.77.1/24
-Windows: DHCP lease, normally 172.31.77.16 through 172.31.77.23
-Gateway: none
+Board:   LILYGO_T_RELAY_S3_NCM
+Variant: SPIRAM_OCT
 ```
 
-The values are configured in:
+It provides:
+
+- LILYGO T-Relay ESP32-S3 support;
+- 8 MiB Octal PSRAM;
+- USB CDC serial console;
+- USB CDC-NCM networking through `network.USBD_NCM`;
+- the ESP32/lwIP/TinyUSB compatibility required by the current MicroPython source used by this project.
+
+The build retains MicroPython's upstream `extmod/network_usbd_ncm.c` implementation and applies only the ESP32 integration fixes required by the selected source/toolchain versions.
+
+## USB network
+
+The controller uses a private point-to-point IPv4 network rather than exposing the USB interface as an Internet gateway:
+
+```text
+Controller: 172.31.77.1/24
+Windows:    172.31.77.2/24
+Gateway:    none
+DNS:        none
+```
+
+The device-side values are configured in:
 
 ```text
 firmware/micropython/micropython_build.json
@@ -49,17 +45,27 @@ with:
 "ncm_ipv4_netmask": "255.255.255.0"
 ```
 
-The builder applies these values to upstream `extmod/network_usbd_ncm.c` at
-build time. The NCM DHCP server assigns the Windows host an address on the same
-USB LAN and does not advertise the USB device as a default gateway.
+TRelay-S3-Controller prints the active USB address during startup when USB NCM is available.
 
-Sprinklers1 still prints the active address at startup:
+## Windows host configuration
 
-```text
-USB IPv4: 172.31.77.1
+Run the following from an Administrator PowerShell window:
+
+```powershell
+.\firmware\tools\configure_controller_usb.ps1
 ```
 
-## Build
+The helper finds the MicroPython USB network adapter, configures `172.31.77.2/24`, adds the controller route, marks the network Private when possible, and creates a narrowly scoped firewall allow rule.
+
+To restore the adapter to DHCP later:
+
+```powershell
+.\firmware\tools\restore_controller_usb_dhcp.ps1
+```
+
+The static USB adapter has no gateway and no DNS server, so normal Internet traffic continues to use the computer's normal network path.
+
+## Build the runtime
 
 From the repository root:
 
@@ -67,8 +73,7 @@ From the repository root:
 python firmware\tools\build_micropython_ncm.py --bootstrap --clean
 ```
 
-On Windows the script relaunches itself inside WSL. Subsequent builds can omit
-`--bootstrap` when ESP-IDF and its toolchain are already present.
+On Windows the build script relaunches itself inside WSL. Subsequent builds can omit `--bootstrap` when ESP-IDF and its toolchain are already installed.
 
 Output:
 
@@ -76,12 +81,28 @@ Output:
 firmware/dist/micropython/LILYGO_T_RELAY_S3_NCM-SPIRAM_OCT.bin
 ```
 
-The exact MicroPython commit used is printed by the build script so a preview
-build can be reproduced/debugged.
+The exact MicroPython commit used is printed by the build script so preview builds can be reproduced and debugged.
 
-## First NCM test after flashing
+## Flashing
 
-Before installing Sprinklers1, verify the runtime at the REPL:
+Install esptool if necessary:
+
+```cmd
+python -m pip install esptool
+```
+
+For a first install, erase flash and write the combined image at address `0`:
+
+```cmd
+python -m esptool --chip esp32s3 --port COM3 erase-flash
+python -m esptool --chip esp32s3 --port COM3 write-flash 0 firmware\dist\micropython\LILYGO_T_RELAY_S3_NCM-SPIRAM_OCT.bin
+```
+
+Erasing flash also erases the writable MicroPython filesystem. It is normally required only for a clean runtime installation, not for routine application updates.
+
+## Runtime check
+
+At the MicroPython REPL:
 
 ```python
 import network
@@ -92,16 +113,11 @@ print("status:", ncm.status())
 print("ifconfig:", ncm.ifconfig())
 ```
 
-`active()` should already be `True` from boot. Do not call `active(True)` merely
-to initialize NCM; upstream master auto-initializes it before USB enumeration.
-
-On Windows, `Get-NetAdapter` should show the MicroPython USB network adapter as
-`Up` with a non-zero link speed once the host has configured NCM.
+The expected controller-side address is `172.31.77.1` with a `255.255.255.0` netmask.
 
 ## Version stream
 
-The custom board runtime has a release version independent from the Sprinklers1
-application. The next release number is stored in:
+The custom MicroPython runtime has a release version independent from the TRelay-S3-Controller application. The next release number is stored in:
 
 ```text
 firmware/tools/next_micropython_version.json
@@ -110,5 +126,5 @@ firmware/tools/next_micropython_version.json
 GitHub release assets are named like:
 
 ```text
-LILYGO_T_RELAY_S3_NCM-SPIRAM_OCT-v1.0.0.bin
+LILYGO_T_RELAY_S3_NCM-SPIRAM_OCT-v1.0.15.bin
 ```
