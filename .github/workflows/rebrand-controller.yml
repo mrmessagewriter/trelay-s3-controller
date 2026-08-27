@@ -1,0 +1,117 @@
+name: Finalize TRelay-S3-Controller rebrand
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/rebrand-controller.yml
+
+permissions:
+  contents: write
+
+jobs:
+  rebrand:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Replace legacy branding and old tool names
+        shell: python
+        run: |
+          from pathlib import Path
+
+          root = Path('.')
+          workflow = Path('.github/workflows/rebrand-controller.yml')
+
+          replacements = [
+              ('Sprinklers1', 'TRelay-S3-Controller'),
+              ('Sprinkler Controller', 'TRelay-S3-Controller'),
+              ('Sprinkler Setup', 'TRelay-S3-Controller Setup'),
+              ('Sprinkler Events', 'TRelay-S3-Controller Events'),
+              ('sprinkler controller', 'relay controller'),
+              ('upload_sprinkler_firmware.py', 'upload_controller_firmware.py'),
+              ('configure_sprinklers1_usb.ps1', 'configure_controller_usb.ps1'),
+              ('restore_sprinklers1_usb_dhcp.ps1', 'restore_controller_usb_dhcp.ps1'),
+              ('Get-SprinklersAdapter', 'Get-ControllerAdapter'),
+              ('_sprinklers1_ncm', '_controller_ncm'),
+          ]
+
+          text_suffixes = {
+              '.py', '.ps1', '.md', '.html', '.json', '.yml', '.yaml',
+              '.cmake', '.h', '.c', '.txt', '.gitignore'
+          }
+          text_names = {'README.md', 'PACKAGE_NOTES.md', '.gitignore'}
+
+          for path in root.rglob('*'):
+              if not path.is_file() or path == workflow or '.git' in path.parts:
+                  continue
+              if path.name not in text_names and path.suffix.lower() not in text_suffixes:
+                  continue
+              try:
+                  original = path.read_text(encoding='utf-8')
+              except UnicodeDecodeError:
+                  continue
+              updated = original
+              for old, new in replacements:
+                  updated = updated.replace(old, new)
+              if updated != original:
+                  path.write_text(updated, encoding='utf-8')
+
+          # The generic replacements above deliberately do not rewrite every
+          # use of the word 'sprinkler' because rain/weather event support is a
+          # valid generic controller feature. Remove only obsolete tool paths.
+          old_tools = [
+              Path('firmware/tools/upload_sprinkler_firmware.py'),
+              Path('firmware/tools/configure_sprinklers1_usb.ps1'),
+              Path('firmware/tools/restore_sprinklers1_usb_dhcp.ps1'),
+          ]
+          for path in old_tools:
+              if path.exists():
+                  path.unlink()
+
+          # This manifest came from an older source-package snapshot and its
+          # hashes/paths are invalid after normal repository edits.
+          manifest = Path('SOURCE_MANIFEST.sha256')
+          if manifest.exists():
+              manifest.unlink()
+
+      - name: Validate rebrand
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          python -m py_compile \
+            firmware/source/boot.py \
+            firmware/source/device_loader_main.py \
+            firmware/source/main.py \
+            firmware/source/events.py \
+            firmware/source/weather.py \
+            firmware/tools/build_firmware_deployment.py \
+            firmware/tools/upload_controller_firmware.py \
+            firmware/tools/build_micropython_ncm.py \
+            firmware/tools/wipe_device.py
+          python -m json.tool firmware/source/config.json >/dev/null
+          python -m json.tool firmware/micropython/micropython_build.json >/dev/null
+
+          if git grep -n -I -E 'Sprinklers1|Sprinkler Controller|Sprinkler Setup|Sprinkler Events|upload_sprinkler_firmware|configure_sprinklers1_usb|restore_sprinklers1_usb' -- ':!.github/workflows/rebrand-controller.yml'; then
+            echo 'Legacy branding remains.' >&2
+            exit 1
+          fi
+
+      - name: Commit cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo 'No additional cleanup was necessary.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Complete TRelay-S3-Controller rebrand'
+          git push origin HEAD:main
