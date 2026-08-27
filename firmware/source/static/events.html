@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Sprinkler Events</title>
+<title>TRelay-S3-Controller Events</title>
 <style>
 *{box-sizing:border-box}body{margin:0;background:#111827;color:#f3f4f6;font-family:Arial,sans-serif}.wrap{max-width:980px;margin:auto;padding:22px}.panel{background:#1f2937;border-radius:12px;padding:20px;margin-bottom:18px}h1,h2{margin-top:0}label{display:block;margin:12px 0 5px;font-weight:bold}input,select{width:100%;padding:10px;border:1px solid #4b5563;border-radius:7px;background:#111827;color:white}.days{display:flex;flex-wrap:wrap;gap:8px}.day{background:#111827;border:1px solid #4b5563;border-radius:7px;padding:8px 10px}.day input{width:auto}.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}button,a.button{border:0;border-radius:8px;padding:11px 14px;color:white;text-decoration:none;cursor:pointer}.save{background:#2563eb}.delete{background:#dc2626}.back{background:#4b5563}.clear{background:#b45309}.note{color:#9ca3af;font-size:13px;line-height:1.4}.event-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.event{border:1px solid #374151;border-radius:9px;padding:14px;margin:0;background:#111827}.event-title{font-weight:bold;font-size:18px}.event-controls{display:grid;grid-template-columns:1fr;gap:7px;margin:12px 0;padding:10px;border-radius:8px;background:#1f2937}.event-controls label{margin:0;font-weight:normal}.event-controls input{width:auto;margin-right:7px}.badge{display:inline-block;padding:3px 7px;border-radius:6px;background:#374151;margin-left:6px;font-size:12px}.skip-badge{background:#92400e;color:#fef3c7}@media(max-width:720px){.event-grid{grid-template-columns:1fr}}.message{display:none;padding:11px;border-radius:8px;margin-top:12px}.ok{display:block;background:#065f46}.bad{display:block;background:#991b1b}.hidden{display:none}
 </style>
@@ -11,15 +11,15 @@
 <body>
 <div class="wrap">
 <div class="panel">
-<h1>Sprinkler Events</h1>
-<p class="note">Events are evaluated using the controller's local synchronized time. Temperature conditions use the most recent local weather reading. A temperature-conditioned event is logged as skipped only when its day and time matched.</p>
+<h1>TRelay-S3-Controller Events</h1>
+<p class="note">Events are evaluated using the controller's local synchronized time. Optional temperature conditions use the most recent local weather reading. A temperature-conditioned event is logged as skipped only when its day and time matched.</p>
 <a class="button back" href="/">Back to Relay Controller</a>
 <a class="button back" href="/setup">Settings</a>
 </div>
 
 <div class="panel">
 <h2>Add Event</h2>
-<label>Event name</label><input id="event_name" maxlength="50" placeholder="Morning front lawn">
+<label>Event name</label><input id="event_name" maxlength="50" placeholder="Morning relay event">
 <label><input id="enabled" type="checkbox" checked style="width:auto"> Enabled</label>
 <label>Days of week</label>
 <div class="days" id="days"></div>
@@ -39,10 +39,10 @@
 <p class="note">Global rain/wind thresholds are configured on the Settings page.</p>
 <div id="url_fields" class="hidden">
 <h2>GET URL</h2>
-<label>URL</label><input id="url" placeholder="https://example.com/sprinkler">
+<label>URL</label><input id="url" placeholder="https://example.com/controller">
 <label>Append relay variable</label><select id="url_relay_mode" onchange="updateUrlFields()"><option value="none">None</option><option value="number">RELAY NUMBER</option><option value="name">RELAY NAME</option></select>
 <div id="url_relay_select" class="hidden"><label>Relay used for URL variables</label><select id="url_relay_number"></select><label><input id="url_include_state" type="checkbox" style="width:auto"> Also append RELAY_STATE</label></div>
-<p class="note">Query variables are appended as <code>?relay_number=1&amp;relay_state=on</code> or <code>?relay_name=Front%20Lawn&amp;relay_state=off</code>. The JSON response must contain either <code>relay_number</code> or <code>relay_name</code>, plus <code>relay_state</code>.</p>
+<p class="note">Query variables are appended as <code>?relay_number=1&amp;relay_state=on</code> or <code>?relay_name=Relay%201&amp;relay_state=off</code>. The JSON response must contain either <code>relay_number</code> or <code>relay_name</code>, plus <code>relay_state</code>.</p>
 </div>
 <div class="actions"><button class="save" onclick="addEvent()">Add Event</button></div>
 <div id="message" class="message"></div>
@@ -67,21 +67,12 @@ let configuredEvents={};
 async function updateEventFlag(id,field,checked){
  const event=configuredEvents[id];
  if(!event)return;
-
  const oldValue=!!event[field];
  event[field]=!!checked;
-
  try{
-  const r=await fetch('/api/events/'+id,{
-   method:'PUT',
-   headers:{'Content-Type':'application/json'},
-   body:JSON.stringify(event)
-  });
-
+  const r=await fetch('/api/events/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(event)});
   const j=await r.json();
-
   if(!r.ok)throw Error(j.error||'Unable to update event');
-
   configuredEvents[id]=j.event;
   msg('Event updated.',true);
   await loadEvents();
@@ -99,49 +90,27 @@ async function loadEvents(){
   const box=document.getElementById('event_list');
   box.innerHTML='';
   configuredEvents={};
-
-  if(!j.events||!j.events.length){
-   box.textContent='No events configured.';
-   return;
-  }
-
+  if(!j.events||!j.events.length){box.textContent='No events configured.';return;}
   j.events.forEach(e=>{
    configuredEvents[e.id]=e;
-
    const d=document.createElement('div');
    d.className='event';
-
-   const days=(e.days||[])
-    .map(x=>dayNames[x].substring(0,3))
-    .join(', ');
-
-   const skipBadge=e.skip_next
-    ?' <span class="badge skip-badge">Next occurrence will be skipped</span>'
-    :'';
-
-   d.innerHTML=
-    '<div class="event-title">'+escapeHtml(e.name)+skipBadge+'</div>'+
+   const days=(e.days||[]).map(x=>dayNames[x].substring(0,3)).join(', ');
+   const skipBadge=e.skip_next?' <span class="badge skip-badge">Next occurrence will be skipped</span>':'';
+   d.innerHTML='<div class="event-title">'+escapeHtml(e.name)+skipBadge+'</div>'+
     '<p>'+days+' at '+escapeHtml(e.time)+'</p>'+
     '<p>'+escapeHtml(actionText(e))+'</p>'+
     '<p>'+tempText(e)+'</p>'+
     '<div class="event-controls">'+
-      '<label><input type="checkbox" '+(e.enabled?'checked ':'')+
-        'onchange="updateEventFlag('+e.id+',\'enabled\',this.checked)"> Enabled</label>'+
-      '<label><input type="checkbox" '+(e.skip_if_recent_rain?'checked ':'')+
-        'onchange="updateEventFlag('+e.id+',\'skip_if_recent_rain\',this.checked)"> Skip for recent rain</label>'+
-      '<label><input type="checkbox" '+(e.skip_if_high_wind?'checked ':'')+
-        'onchange="updateEventFlag('+e.id+',\'skip_if_high_wind\',this.checked)"> Skip for high wind</label>'+
-      '<label><input type="checkbox" '+(e.skip_next?'checked ':'')+
-        'onchange="updateEventFlag('+e.id+',\'skip_next\',this.checked)"> Skip next occurrence</label>'+
+      '<label><input type="checkbox" '+(e.enabled?'checked ':'')+'onchange="updateEventFlag('+e.id+',\'enabled\',this.checked)"> Enabled</label>'+
+      '<label><input type="checkbox" '+(e.skip_if_recent_rain?'checked ':'')+'onchange="updateEventFlag('+e.id+',\'skip_if_recent_rain\',this.checked)"> Skip for recent rain</label>'+
+      '<label><input type="checkbox" '+(e.skip_if_high_wind?'checked ':'')+'onchange="updateEventFlag('+e.id+',\'skip_if_high_wind\',this.checked)"> Skip for high wind</label>'+
+      '<label><input type="checkbox" '+(e.skip_next?'checked ':'')+'onchange="updateEventFlag('+e.id+',\'skip_next\',this.checked)"> Skip next occurrence</label>'+
     '</div>'+
     '<button class="delete" onclick="removeEvent('+e.id+')">Remove</button>';
-
    box.appendChild(d);
   });
- }catch(e){
-  document.getElementById('event_list').textContent=
-   'Unable to load events: '+e.message;
- }
+ }catch(e){document.getElementById('event_list').textContent='Unable to load events: '+e.message;}
 }
 
 async function removeEvent(id){if(!confirm('Remove this event?'))return;let r=await fetch('/api/events/'+id,{method:'DELETE'});let j=await r.json();if(!r.ok){msg(j.error||'Delete failed',false);return}msg('Event removed.',true);loadEvents()}
