@@ -1,56 +1,55 @@
-# Sprinklers1 Master-NCM Source Package
+# TRelay-S3-Controller Project Notes
 
-This package contains the complete Sprinklers1 source tree used for the next
-build after application firmware 1.0.21.
+This repository contains the application firmware, deployment tools, and optional custom MicroPython runtime for the LILYGO T-Relay ESP32-S3 six-relay board.
 
-## MicroPython runtime direction
+## Application firmware
 
-- MicroPython source ref: `master`
-- Board: `LILYGO_T_RELAY_S3_NCM`
-- Variant: `SPIRAM_OCT`
-- MicroPython's upstream `extmod/network_usbd_ncm.c` remains the NCM driver.
-- The retired `network_usbd_ncm_esp32.c` replacement backend is not included.
-- The build helper applies narrowly scoped ESP32/lwIP and TinyUSB compatibility
-  glue and fails if expected upstream source anchors change.
-- USB controller addressing is discovered at runtime; Sprinklers1 does not
-  hard-code `192.168.7.1`.
+The TRelay-S3-Controller application provides:
 
+- six-relay control through the board's 74HC595 shift register;
+- a Microdot web UI and REST API;
+- scheduled relay events and persistent event logs;
+- optional NTP and weather-aware event conditions;
+- Wi-Fi networking;
+- optional USB CDC-NCM networking when the custom runtime is installed.
 
-## Build-system correction from diagnostics
+Application builds create an uncompressed `main.zip` plus a self-contained `deployment.zip` containing:
 
-A GitHub Actions failure diagnostics archive showed CMake trying to compile
-`/shared/netutils/dhcpserver.c`. The board file had used `${MICROPY_DIR}` before
-MicroPython initializes that variable. The board now derives the MicroPython
-repository root from `CMAKE_CURRENT_LIST_DIR`, and the build helper verifies the
-resolved DHCP source before invoking ESP-IDF.
+```text
+boot.py
+device_loader_main.py
+main.zip
+```
 
-## Application source
+The deployment tools install these as `/boot.py`, `/main.py`, and `/main.zip`. Persistent `/config.json` and `/events.json` are preserved during normal application updates.
 
-The application source is the current dual-network diagnostic revision with:
+## Optional MicroPython runtime
 
-- six-relay startup test;
-- Wi-Fi plus USB NCM HTTP binding on `0.0.0.0`;
-- Microdot on port 80;
-- raw TCP diagnostic listener on port 8081;
-- NTP, weather, events, persistent configuration and logs;
-- readiness LED behavior tied to the TCP diagnostic listener.
+The custom MicroPython runtime is only required for USB network access. It uses the `LILYGO_T_RELAY_S3_NCM` board configuration with the `SPIRAM_OCT` variant.
 
-## Version counters
+The USB network is configured as a private point-to-point LAN:
 
-- Next Sprinklers1 application version: `1.0.22`
-- Next MicroPython board-runtime release version: `1.0.8`
+```text
+Controller: 172.31.77.1/24
+Windows:    172.31.77.2/24
+Gateway:    none
+DNS:        none
+```
 
-## Validation performed when this package was generated
+The Windows helper scripts are:
 
-- All Python files compile with CPython's parser.
-- All JSON files parse successfully.
-- Both GitHub Actions YAML workflows parse successfully.
-- `build_firmware_deployment.py` successfully built and verified a test
-  `main.zip` from the included `firmware/source` tree.
-- The TinyUSB NCM carrier-state backport passed a structural synthetic-source
-  patch test.
-- The final source ZIP was integrity-tested after creation.
+```text
+firmware/tools/configure_controller_usb.ps1
+firmware/tools/restore_controller_usb_dhcp.ps1
+```
 
-An ESP32 toolchain/hardware flash test was not run in the packaging environment,
-because the environment cannot fetch the external MicroPython/ESP-IDF sources.
-The normal local/GitHub build performs those fetches and compilation steps.
+## Independent version streams
+
+Application firmware and the custom MicroPython runtime are released independently. Their next-version files are:
+
+```text
+firmware/tools/next_firmware_version.json
+firmware/tools/next_micropython_version.json
+```
+
+See `README.md` and the files under `firmware/docs/` for build, deployment, networking, and hardware details.
