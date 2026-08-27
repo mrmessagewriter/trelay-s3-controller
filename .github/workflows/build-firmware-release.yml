@@ -177,14 +177,39 @@ jobs:
           RELEASE_TAG: ${{ steps.firmware.outputs.tag }}
           VERSION: ${{ steps.firmware.outputs.version }}
           RELEASE_NAME: ${{ steps.firmware.outputs.release_name }}
+          PACKAGE_NAME: ${{ steps.firmware.outputs.package_name }}
           PACKAGE_PATH: ${{ steps.firmware.outputs.package_path }}
         run: |
+          $releaseNotes = @"
+          ## TRelay-S3-Controller
+
+          MicroPython web and REST control for the **LILYGO T-Relay ESP32-S3** with six-relay control, schedules, persistent event logging, optional weather conditions, Wi-Fi, and optional USB CDC-NCM networking.
+
+          ### Download
+
+          Download **$env:PACKAGE_NAME** from the assets below. It is the self-contained application deployment package containing `boot.py`, the permanent ZIP loader, and `main.zip`.
+
+          ### Install
+
+          ```cmd
+          python -m pip install mpremote pyserial
+          python firmware\tools\upload_controller_firmware.py COM3 --firmware $env:PACKAGE_NAME
+          ```
+
+          Replace `COM3` with the serial port assigned to the ESP32-S3.
+
+          The custom MicroPython USB-NCM runtime is only required if you want the controller reachable over USB networking. Wi-Fi operation does not require USB CDC-NCM.
+
+          See the repository README for complete build, deployment, USB-network, and configuration instructions.
+          "@
+
           gh release create `
               $env:RELEASE_TAG `
               $env:PACKAGE_PATH `
               --repo "${{ github.repository }}" `
               --target "${{ github.sha }}" `
               --title "$env:RELEASE_NAME v$env:VERSION" `
+              --notes "$releaseNotes" `
               --generate-notes
 
       - name: Commit next application firmware version
