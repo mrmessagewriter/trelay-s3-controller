@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the Sprinklers1 firmware image.
+"""Build the TRelay-S3-Controller firmware image.
 
 Repository layout expected by this tool:
 
@@ -18,7 +18,7 @@ Repository layout expected by this tool:
 
 The generated ZIP files are intentionally uncompressed (ZIP_STORED).
 
-main.zip contains the Sprinklers1 application and firmware_info.json.
+main.zip contains the TRelay-S3-Controller application and firmware_info.json.
 
 deployment.zip contains:
     boot.py
@@ -41,7 +41,7 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-FIRMWARE_NAME = "Sprinklers1"
+FIRMWARE_NAME = "TRelay-S3-Controller"
 FIRMWARE_INFO = "firmware_info.json"
 VERSION_FILE = "next_firmware_version.json"
 DEPLOYMENT_FILENAME = "deployment.zip"
