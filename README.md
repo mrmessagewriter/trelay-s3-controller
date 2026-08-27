@@ -40,7 +40,7 @@ See [firmware/docs/HARDWARE.md](firmware/docs/HARDWARE.md) for GPIO and relay de
 
 ### When do I need it?
 
-You only need the project's custom MicroPython build if you want to communicate with **TRelay-S3-Controller over USB as a network connection**.
+You only need the project's custom MicroPython build if you want to communicate with **TRelay-S3-Controller over USB as a network connection**.  The primary reason for this, is when you want to configure the WiFi, although it can be managed by configuration file, it can also be done through here.   Also it allows you to not use WiFi with the device.  So if the device was very far away from WiFi, you can program it in that location. 
 
 With the custom runtime installed, connecting the ESP32-S3 to a computer over USB exposes a CDC-NCM network adapter in addition to the normal serial console. The web UI and REST API can then be reached directly over USB without requiring Wi-Fi.
 
