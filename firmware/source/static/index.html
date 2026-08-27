@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Sprinkler Controller</title>
+<title>TRelay-S3-Controller</title>
 <style>
 *{box-sizing:border-box}body{margin:0;background:#111827;color:#f3f4f6;font-family:Arial,sans-serif}
 header{background:#1f2937;padding:18px;text-align:center;border-bottom:1px solid #374151}h1{margin:0}
@@ -14,7 +14,7 @@ header{background:#1f2937;padding:18px;text-align:center;border-bottom:1px solid
 </head>
 <body>
 <header>
-<h1 id="device">Sprinklers1</h1>
+<h1 id="device">TRelay-S3-Controller</h1>
 <div id="firmware" class="meta">Firmware version loading...</div>
 <div id="connection" class="meta">Connecting...</div>
 <div id="clock" class="meta">Time not synchronized</div>
@@ -41,7 +41,7 @@ header{background:#1f2937;padding:18px;text-align:center;border-bottom:1px solid
 const grid=document.getElementById("grid");
 function esc(v){const d=document.createElement("div");d.textContent=v;return d.innerHTML}
 function render(data){
- document.getElementById("device").textContent=data.device||"Sprinklers1";
+ document.getElementById("device").textContent=data.device||"TRelay-S3-Controller";
  const fw=data.firmware||{};
  document.getElementById("firmware").textContent="Firmware v"+(fw.version||"unknown");
  document.getElementById("connection").textContent=data.ip?"Connected: "+data.ip:"Connected";
