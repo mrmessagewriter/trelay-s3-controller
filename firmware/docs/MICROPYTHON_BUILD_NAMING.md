@@ -1,7 +1,6 @@
 # MicroPython Build Naming
 
-The custom MicroPython runtime uses a MicroPython-style board identity rather
-than the Sprinklers1 application name.
+The custom MicroPython runtime uses a MicroPython-style board identity rather than the TRelay-S3-Controller application name.
 
 ## Board name
 
@@ -9,8 +8,7 @@ than the Sprinklers1 application name.
 LILYGO_T_RELAY_S3_NCM
 ```
 
-This follows the same vendor/board naming style as MicroPython's existing
-LILYGO board names such as `LILYGO_T3_S3`.
+This follows the same vendor/board naming style as MicroPython's existing LILYGO board names such as `LILYGO_T3_S3`.
 
 ## Variant
 
@@ -44,18 +42,11 @@ Example tag:
 micropython-LILYGO_T_RELAY_S3_NCM-v1.0.0
 ```
 
-The Sprinklers1 name is reserved for the application firmware and does not
-identify the MicroPython runtime.
+The `TRelay-S3-Controller` name identifies the application firmware. `LILYGO_T_RELAY_S3_NCM` identifies the optional custom MicroPython runtime and remains deliberately separate.
 
-## Repository migration
+## Repository board directory
 
-Rename/remove the old custom board directory:
-
-```text
-firmware/micropython/boards/T_RELAY_S3_NCM
-```
-
-and replace it with:
+The custom board definition lives at:
 
 ```text
 firmware/micropython/boards/LILYGO_T_RELAY_S3_NCM
