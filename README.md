@@ -4,6 +4,8 @@ A MicroPython application for the **LILYGO T-Relay ESP32-S3** that turns the six
 
 This repository contains both the application firmware and the supporting build/deployment tools. The instructions below focus on building and deploying the **TRelay-S3-Controller application firmware**, with a separate section for the optional custom MicroPython runtime used for USB networking.
 
+This was written initially as a sprinkler control system, which is why there is so much support for things which a sprinkler system would require.  I may peel those out some day, but it is still functional as a relay control timer system, you just don't have use the sprinkler features along with is all. 
+
 ## Features
 
 - Controls all six relay outputs on the LILYGO T-Relay ESP32-S3.
