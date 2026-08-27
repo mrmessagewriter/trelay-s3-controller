@@ -1,10 +1,72 @@
 # TRelay-S3-Controller
 
-A MicroPython application for the **LILYGO T-Relay ESP32-S3** that turns the six-relay board into a network-connected relay controller with a built-in web UI, scheduling, event logging, optional weather-aware controls, Wi-Fi, and optional USB networking.
+[![Latest release](https://img.shields.io/github/v/release/mrmessagewriter/trelay-s3-controller?display_name=tag&sort=semver)](https://github.com/mrmessagewriter/trelay-s3-controller/releases)
+[![License](https://img.shields.io/github/license/mrmessagewriter/trelay-s3-controller)](LICENSE)
+[![ESP32-S3](https://img.shields.io/badge/ESP32--S3-LILYGO%20T--Relay-informational)](firmware/docs/HARDWARE.md)
+[![MicroPython](https://img.shields.io/badge/MicroPython-ESP32--S3-2b2728)](firmware/docs/MICROPYTHON_USB_NCM.md)
 
-This repository contains both the application firmware and the supporting build/deployment tools. The instructions below focus on building and deploying the **TRelay-S3-Controller application firmware**, with a separate section for the optional custom MicroPython runtime used for USB networking.
+**MicroPython web and REST control for the LILYGO T-Relay ESP32-S3.** Control all six relays from a browser or API, schedule automation, keep persistent event logs, apply optional weather conditions, and connect over Wi-Fi or optional USB CDC-NCM networking.
 
-This was written initially as a sprinkler control system, which is why there is so much support for things which a sprinkler system would require.  I may peel those out some day, but it is still functional as a relay control timer system, you just don't have use the sprinkler features along with is all. 
+![TRelay-S3-Controller web interface](docs/images/web-ui.png)
+
+## Why this project?
+
+TRelay-S3-Controller turns the LILYGO T-Relay ESP32-S3 into a self-contained network relay controller without requiring a separate server, cloud service, or home-automation hub.
+
+- Six-relay browser control with a built-in responsive web UI.
+- REST API for integration with other software and automation systems.
+- Recurring schedules with persistent event storage and logging.
+- Optional temperature, rain, and wind conditions for scheduled actions.
+- Wi-Fi operation with optional direct USB networking.
+- Firmware packaging, versioning, SHA-256 verification, and safe staged deployment.
+- A custom MicroPython USB CDC-NCM runtime for direct network access over USB when needed.
+
+### Relay control in action
+
+![Relay toggle demonstration](docs/images/relay-demo.gif)
+
+## Quick start
+
+### 1. Get the hardware
+
+This project targets the **LILYGO T-Relay ESP32-S3 six-relay board** with 16 MiB flash and 8 MiB Octal PSRAM.
+
+### 2. Install MicroPython
+
+For Wi-Fi-only use, install a compatible MicroPython build for the board.
+
+If you want to reach the controller directly over **USB as a network connection**, use the project's custom USB CDC-NCM MicroPython runtime. See [Optional MicroPython runtime for USB networking](#optional-micropython-runtime-for-usb-networking).
+
+### 3. Clone the repository and install the host tools
+
+```cmd
+git clone https://github.com/mrmessagewriter/trelay-s3-controller.git
+cd trelay-s3-controller
+python -m pip install mpremote pyserial
+```
+
+### 4. Build and deploy the application
+
+Replace `COM3` with the serial port assigned to the ESP32-S3:
+
+```cmd
+python firmware\tools\upload_controller_firmware.py COM3 --build
+```
+
+The uploader builds the application, verifies it, installs `/boot.py`, the permanent `/main.py` loader, and `/main.zip`, then resets the controller.
+
+### 5. Configure and use the controller
+
+Configure Wi-Fi and relay names through the web UI, or edit the device configuration directly. Once connected, open the address printed by the controller during startup.
+
+Useful pages and endpoints:
+
+```text
+/                 Main relay-control UI
+/events           Event/schedule management
+/setup            Device configuration
+/api/status       Controller and network status
+```
 
 ## Features
 
@@ -40,7 +102,7 @@ See [firmware/docs/HARDWARE.md](firmware/docs/HARDWARE.md) for GPIO and relay de
 
 ### When do I need it?
 
-You only need the project's custom MicroPython build if you want to communicate with **TRelay-S3-Controller over USB as a network connection**.  The primary reason for this, is when you want to configure the WiFi, although it can be managed by configuration file, it can also be done through here.   Also it allows you to not use WiFi with the device.  So if the device was very far away from WiFi, you can program it in that location. 
+You only need the project's custom MicroPython build if you want to communicate with **TRelay-S3-Controller over USB as a network connection**. This is useful for initial Wi-Fi configuration, installations where Wi-Fi is unavailable, or direct maintenance without placing the controller on a LAN.
 
 With the custom runtime installed, connecting the ESP32-S3 to a computer over USB exposes a CDC-NCM network adapter in addition to the normal serial console. The web UI and REST API can then be reached directly over USB without requiring Wi-Fi.
 
@@ -60,7 +122,7 @@ The MicroPython runtime has its **own version stream**, separate from the TRelay
 
 ### Download a prebuilt MicroPython runtime
 
-The easiest option is to download the latest GitHub release whose name begins with:
+Download the latest GitHub release whose name begins with:
 
 ```text
 MicroPython LILYGO_T_RELAY_S3_NCM
@@ -124,7 +186,7 @@ The resulting binary is written to:
 firmware/dist/micropython/LILYGO_T_RELAY_S3_NCM-SPIRAM_OCT.bin
 ```
 
-For more detail, see [firmware/docs/MICROPYTHON_USB_NCM.md](firmware/docs/MICROPYTHON_USB_NCM.md).
+For more detail, see [firmware/docs/MICROPYTHON_USB_NCM.md](firmware/docs/MICROPYTHON_USB_NCM.md) and the technical article [USB CDC-NCM networking on MicroPython and ESP32-S3](docs/USB_CDC_NCM_ON_ESP32_S3.md).
 
 ## Repository layout
 
@@ -194,13 +256,7 @@ From the repository root:
 python firmware\tools\build_firmware_deployment.py
 ```
 
-The builder reads the application from:
-
-```text
-firmware/source/
-```
-
-and creates:
+The builder reads the application from `firmware/source/` and creates:
 
 ```text
 firmware/dist/main.zip
@@ -358,15 +414,6 @@ TRelay-S3-Controller runs the same HTTP server over the available network interf
 
 The controller prints the available Web UI addresses during startup. Open the reported address in a browser.
 
-Useful endpoints include:
-
-```text
-/                 Main relay-control UI
-/events           Event/schedule management
-/setup            Device configuration
-/api/status       Controller and network status
-```
-
 With the project's USB-NCM MicroPython runtime installed, the USB controller side is `172.31.77.1/24`. Wi-Fi addresses are assigned by the configured wireless network.
 
 See [firmware/docs/HTTP_WIFI_AND_USB.md](firmware/docs/HTTP_WIFI_AND_USB.md) for networking details.
@@ -383,9 +430,7 @@ Use this only when intentionally resetting the writable MicroPython filesystem. 
 
 ## GitHub releases
 
-Application firmware can also be built by GitHub Actions and published as versioned release assets.
-
-See the repository's [Releases](https://github.com/mrmessagewriter/trelay-s3-controller/releases) page for published builds.
+Application firmware and the optional custom MicroPython USB-NCM runtime are published on the repository's [Releases](https://github.com/mrmessagewriter/trelay-s3-controller/releases) page.
 
 ## More documentation
 
@@ -395,6 +440,8 @@ See the repository's [Releases](https://github.com/mrmessagewriter/trelay-s3-con
 - [Hardware](firmware/docs/HARDWARE.md)
 - [HTTP, Wi-Fi, and USB](firmware/docs/HTTP_WIFI_AND_USB.md)
 - [MicroPython USB-NCM runtime](firmware/docs/MICROPYTHON_USB_NCM.md)
+- [USB CDC-NCM technical deep dive](docs/USB_CDC_NCM_ON_ESP32_S3.md)
+- [Project promotion and launch checklist](docs/PROMOTION.md)
 - [GitHub releases](firmware/docs/GITHUB_RELEASES.md)
 
 ## License
