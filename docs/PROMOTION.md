@@ -10,7 +10,7 @@ Use this as the short repository description in GitHub's **About** section:
 
 ## Recommended GitHub topics
 
-GitHub currently supports up to 20 repository topics. Recommended topics for this project:
+Recommended topics for this project:
 
 ```text
 esp32
@@ -164,7 +164,7 @@ The first article is already available in this repository:
 - [x] Current application release notes improved.
 - [x] Future application release notes improved in GitHub Actions.
 - [x] USB CDC-NCM technical article added.
-- [x] Weekly GitHub traffic report workflow added.
+- [x] GitHub traffic measurement plan documented.
 - [ ] Set the GitHub repository description from the text above.
 - [ ] Add the recommended GitHub topics.
 - [ ] Select `docs/images/social-preview.png` as the GitHub Social Preview.
@@ -173,7 +173,9 @@ The first article is already available in this repository:
 
 ## What to watch after posting
 
-GitHub's **Insights → Traffic** view shows traffic from the previous 14 days. The repository also includes a scheduled workflow that summarizes traffic through the GitHub API.
+Use GitHub's **Insights → Traffic** page. It reports the recent traffic window, including views, unique visitors, clones, referring sites, and popular repository content.
+
+The default `GITHUB_TOKEN` supplied to GitHub Actions cannot access the repository traffic API for this repository, so this project intentionally does not include a scheduled traffic workflow that would fail without a separate personal access token.
 
 When evaluating promotion, focus on:
 
