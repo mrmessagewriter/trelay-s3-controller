@@ -1,5 +1,5 @@
 # ============================================================
-# Sprinklers1 firmware ZIP loader
+# TRelay-S3-Controller firmware ZIP loader
 #
 # Deploy this file once as /main.py on the ESP32.
 # Firmware upgrades replace only /main.zip.
@@ -469,7 +469,7 @@ def ensure_device_config():
 def run_firmware():
     print()
     print("============================")
-    print("Sprinklers1 Firmware Loader")
+    print("TRelay-S3-Controller Firmware Loader")
     print("============================")
 
     gc.collect()
