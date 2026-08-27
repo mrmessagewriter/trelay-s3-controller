@@ -102,7 +102,7 @@ firmware_info = None
 def default_config():
 
     return {
-        "device_name": "Sprinklers1",
+        "device_name": "TRelay-S3-Controller",
 
         "wifi": {
             "ssid": "",
@@ -164,7 +164,7 @@ def load_config():
 
 
     if "device_name" not in config:
-        config["device_name"] = "Sprinklers1"
+        config["device_name"] = "TRelay-S3-Controller"
 
 
     if "wifi" not in config:
@@ -1925,7 +1925,7 @@ def get_firmware_info():
                 "name":
                     data.get(
                         "name",
-                        "Sprinklers1"
+                        "TRelay-S3-Controller"
                     ),
 
                 "version":
@@ -1947,7 +1947,7 @@ def get_firmware_info():
             pass
 
     firmware_info = {
-        "name": "Sprinklers1",
+        "name": "TRelay-S3-Controller",
         "version": "unknown",
         "date": ""
     }
@@ -1990,7 +1990,7 @@ def get_status():
         "device":
             config.get(
                 "device_name",
-                "Sprinklers1"
+                "TRelay-S3-Controller"
             ),
 
         "firmware":
@@ -2153,7 +2153,7 @@ def register_routes():
             "device_name":
                 config.get(
                     "device_name",
-                    "Sprinklers1"
+                    "TRelay-S3-Controller"
                 ),
 
             "ssid":
@@ -3009,7 +3009,7 @@ async def diagnostic_tcp_server():
                 }
 
             body = (
-                "Sprinklers1 raw TCP diagnostic OK\n"
+                "TRelay-S3-Controller raw TCP diagnostic OK\n"
                 "USB IP: " +
                 str(usb_ip()) +
                 "\n"
@@ -3157,7 +3157,7 @@ def main():
 
     print()
     print("============================")
-    print("Sprinklers1")
+    print("TRelay-S3-Controller")
     print("============================")
 
 
@@ -3188,7 +3188,7 @@ def main():
         "Device:",
         config.get(
             "device_name",
-            "Sprinklers1"
+            "TRelay-S3-Controller"
         )
     )
 

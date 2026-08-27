@@ -48,7 +48,7 @@ def _https_get_json(host, port, path):
         request = (
             "GET {} HTTP/1.1\r\n"
             "Host: {}\r\n"
-            "User-Agent: Sprinklers1/1.0\r\n"
+            "User-Agent: TRelay-S3-Controller/1.0\r\n"
             "Accept: application/json\r\n"
             "Connection: close\r\n"
             "\r\n"
@@ -383,7 +383,7 @@ class WeatherService:
             request = (
                 "GET {} HTTP/1.1\r\n"
                 "Host: {}\r\n"
-                "User-Agent: Sprinklers1/1.0\r\n"
+                "User-Agent: TRelay-S3-Controller/1.0\r\n"
                 "Accept: application/json\r\n"
                 "Connection: close\r\n"
                 "\r\n"
