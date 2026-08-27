@@ -2,7 +2,7 @@
 
 A MicroPython application for the **LILYGO T-Relay ESP32-S3** that turns the six-relay board into a network-connected sprinkler and relay controller with a built-in web UI, scheduling, event logging, weather-aware controls, Wi-Fi, and USB networking.
 
-This repository contains both the application firmware and the supporting build/deployment tools. The instructions below focus on building and deploying the **Sprinklers1 application firmware**, not rebuilding MicroPython itself.
+This repository contains both the application firmware and the supporting build/deployment tools. The instructions below focus on building and deploying the **Sprinklers1 application firmware**, with a separate section for the optional custom MicroPython runtime used for USB networking.
 
 ## Features
 
@@ -17,7 +17,7 @@ This repository contains both the application firmware and the supporting build/
 - NTP time synchronization.
 - Weather lookup by configured location.
 - Wi-Fi station networking.
-- USB CDC-NCM networking for direct configuration and control over USB.
+- Optional USB CDC-NCM networking for direct configuration and control over USB.
 - Versioned firmware packages with SHA-256 verification.
 - Safe staged deployment that preserves device configuration and event data.
 
@@ -30,9 +30,99 @@ Target board:
 - 8 MiB Octal PSRAM
 - Relay outputs driven through the board's 74HC595 shift register
 
-The application expects the custom MicroPython runtime used by this project to already be installed on the board. That runtime provides the required ESP32-S3 PSRAM support and USB CDC-NCM network interface.
+The Sprinklers1 application can operate over Wi-Fi without the project's custom USB-NCM MicroPython runtime. The custom runtime is only required when you want the controller to expose a network connection over its USB port.
 
 See [firmware/docs/HARDWARE.md](firmware/docs/HARDWARE.md) for GPIO and relay details.
+
+## Optional MicroPython runtime for USB networking
+
+### When do I need it?
+
+You only need the project's custom MicroPython build if you want to communicate with Sprinklers1 over **USB as a network connection**.
+
+With the custom runtime installed, connecting the ESP32-S3 to a computer over USB exposes a CDC-NCM network adapter in addition to the normal serial console. The Sprinklers1 web UI and REST API can then be reached directly over USB without requiring Wi-Fi.
+
+If you plan to use the controller only over Wi-Fi, the application detects that `network.USBD_NCM` is unavailable and continues without USB networking.
+
+### What the custom runtime provides
+
+The project-specific build is based on MicroPython for the ESP32-S3 and adds the board/runtime configuration needed by Sprinklers1, including:
+
+- LILYGO T-Relay ESP32-S3 support.
+- 8 MiB Octal PSRAM (`SPIRAM_OCT`).
+- USB CDC serial console.
+- USB CDC-NCM networking through `network.USBD_NCM`.
+- The USB controller-side address used by this project: `172.31.77.1/24`.
+
+The MicroPython runtime has its **own version stream**, separate from the Sprinklers1 application firmware.
+
+### Download a prebuilt MicroPython runtime
+
+The easiest option is to download the latest GitHub release whose name begins with:
+
+```text
+MicroPython LILYGO_T_RELAY_S3_NCM
+```
+
+from the repository's [Releases](https://github.com/mrmessagewriter/trelay-s3-controller/releases) page.
+
+The binary asset is named like:
+
+```text
+LILYGO_T_RELAY_S3_NCM-SPIRAM_OCT-vX.Y.Z.bin
+```
+
+### Flash the MicroPython runtime
+
+Install `esptool` if needed:
+
+```cmd
+python -m pip install esptool
+```
+
+Put the ESP32-S3 into its ROM bootloader if necessary, then identify the COM port:
+
+```cmd
+python -m serial.tools.list_ports
+```
+
+For a first install, erase the existing flash:
+
+```cmd
+python -m esptool --chip esp32s3 --port COM3 erase-flash
+```
+
+Then flash the downloaded MicroPython binary at address `0`:
+
+```cmd
+python -m esptool --chip esp32s3 --port COM3 write-flash 0 LILYGO_T_RELAY_S3_NCM-SPIRAM_OCT-vX.Y.Z.bin
+```
+
+Replace `COM3` and the filename with the values for your system.
+
+> **Note:** `erase-flash` removes the writable MicroPython filesystem, including any existing Sprinklers1 application, configuration, and event data. It is normally used for the initial MicroPython installation, not for routine application updates.
+
+After MicroPython is installed and the board restarts, deploy the Sprinklers1 application using the tools described below.
+
+### Build the custom MicroPython runtime yourself
+
+This is separate from building the Sprinklers1 application firmware.
+
+From the repository root:
+
+```cmd
+python firmware\tools\build_micropython_ncm.py --bootstrap --clean
+```
+
+On Windows the MicroPython builder uses WSL for the ESP-IDF/MicroPython build environment.
+
+The resulting binary is written to:
+
+```text
+firmware/dist/micropython/LILYGO_T_RELAY_S3_NCM-SPIRAM_OCT.bin
+```
+
+For more detail, see [firmware/docs/MICROPYTHON_USB_NCM.md](firmware/docs/MICROPYTHON_USB_NCM.md).
 
 ## Repository layout
 
@@ -233,7 +323,7 @@ See [firmware/docs/EVENTS_AND_PERSISTENCE.md](firmware/docs/EVENTS_AND_PERSISTEN
 Sprinklers1 runs the same HTTP server over both available network interfaces:
 
 - Wi-Fi
-- USB CDC-NCM
+- USB CDC-NCM, when supported by the installed MicroPython runtime
 
 The controller prints the available Web UI addresses during startup. Open the reported address in a browser.
 
@@ -246,7 +336,7 @@ Useful endpoints include:
 /api/status       Controller and network status
 ```
 
-The custom runtime in this repository currently configures the USB controller side as `172.31.77.1/24`. Wi-Fi addresses are assigned by the configured wireless network.
+With the project's USB-NCM MicroPython runtime installed, the USB controller side is configured as `172.31.77.1/24`. Wi-Fi addresses are assigned by the configured wireless network.
 
 See [firmware/docs/HTTP_WIFI_AND_USB.md](firmware/docs/HTTP_WIFI_AND_USB.md) for networking details.
 
@@ -273,6 +363,7 @@ See the repository's [Releases](https://github.com/mrmessagewriter/trelay-s3-con
 - [Events and persistence](firmware/docs/EVENTS_AND_PERSISTENCE.md)
 - [Hardware](firmware/docs/HARDWARE.md)
 - [HTTP, Wi-Fi, and USB](firmware/docs/HTTP_WIFI_AND_USB.md)
+- [MicroPython USB-NCM runtime](firmware/docs/MICROPYTHON_USB_NCM.md)
 - [GitHub releases](firmware/docs/GITHUB_RELEASES.md)
 
 ## License
