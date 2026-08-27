@@ -1,48 +1,39 @@
-# MicroPython ESP-IDF Build Pin
+# MicroPython ESP-IDF Build Troubleshooting
 
-The Sprinklers1 custom MicroPython runtime is currently pinned to:
-
-```text
-ESP-IDF v5.3
-```
-
-rather than ESP-IDF 5.5.x.
-
-## Why
-
-A GitHub Actions build using ESP-IDF 5.5.2 reached the managed
-`espressif/mdns` component and failed while compiling `mdns.c` with the
-ESP-IDF 5.5.2 Xtensa GCC 14.2 toolchain.
-
-Current MicroPython documents ESP-IDF v5.3 as a supported ESP32 build version.
-ESP-IDF v5.3 uses the earlier Xtensa GCC 13.x toolchain, so this pin avoids the
-5.5.x/GCC-14 compiler path while we keep the newer MicroPython source needed for
-`network.USBD_NCM`.
-
-The version is controlled in:
+The TRelay-S3-Controller custom MicroPython runtime currently follows the versions configured in:
 
 ```text
 firmware/micropython/micropython_build.json
 ```
 
-with:
+At present the ESP-IDF ref is:
 
-```json
-"esp_idf_ref": "v5.3"
+```text
+v5.5.2
 ```
+
+The build helper checks out the configured MicroPython and ESP-IDF revisions and resets dependency checkouts before building so files modified by an earlier failed build do not contaminate the next run.
+
+## Build command
+
+From the repository root:
+
+```cmd
+python firmware\tools\build_micropython_ncm.py --bootstrap --clean
+```
+
+On Windows the script relaunches inside WSL. The initial `--bootstrap` build installs the ESP-IDF toolchain; subsequent builds can normally omit it.
 
 ## CI diagnostics
 
-If a custom MicroPython build fails, `build_micropython_ncm.py` now scans the
-ESP-IDF build log directory and prints the relevant `error:` / `fatal:` /
-`undefined reference` lines plus the tail of the generated logs.
+If a custom MicroPython build fails, `build_micropython_ncm.py` reports failures from the ESP-IDF/Ninja build where possible.
 
-The GitHub Action also uploads those ESP-IDF logs as the temporary workflow
-artifact:
+The GitHub Action also prints the relevant build-log tail and uploads temporary failure diagnostics under a name similar to:
 
 ```text
-micropython-esp-idf-failure-logs
+micropython-LILYGO_T_RELAY_S3_NCM-failure-diagnostics
 ```
 
-This makes the underlying compiler failure available even when GitHub truncates
-the very long Ninja command output.
+The diagnostic artifact is useful when GitHub truncates long compiler or Ninja command output.
+
+When debugging a failure, start with the first compiler, linker, CMake, or Ninja error rather than later cascading failures.
